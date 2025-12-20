@@ -9,10 +9,10 @@ from docx.shared import Inches
 from sqlalchemy import create_engine, text
 
 # --- !!! ÖNEMLİ: BURAYA KENDİ URI ADRESİNİ YAPIŞTIR !!! ---
-DB_URI = "postgresql://postgres:[ŞİFREN]@db.xxxx.supabase.co:5432/postgres"
+DB_URI = "= postgresql://postgres:tesvab-cybzyX-9hojcu@db.ugpzfpxsiydcvfgibzlj.supabase.co:5432/postgres"
 
 # --- 1. VERİTABANI BAĞLANTISI ---
-engine = create_engine(DB_URI)= postgresql://postgres:tesvab-cybzyX-9hojcu@db.ugpzfpxsiydcvfgibzlj.supabase.co:5432/postgres
+engine = create_engine(DB_URI)
 
 def init_db():
     with engine.connect() as conn:
