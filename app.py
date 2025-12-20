@@ -175,4 +175,10 @@ else:
                 fot = st.file_uploader("Foto", key=f"f_{r['id']}")
                 if st.button("Bitir", key=f"b_{r['id']}"):
                     if fot:
-                        conn.execute
+                        conn.execute("UPDATE tasks SET status='Tamamlandı', report=?, photo=?, updated_at=? WHERE id=?", (notu, fot.read(), datetime.now().strftime("%d/%m %H:%M"), r['id']))
+                        conn.commit()
+                        st.rerun()
+    
+    elif choice == "Zimmetim":
+        df_my = pd.read_sql(f"SELECT item_name, quantity FROM inventory WHERE assigned_to='{st.session_state['user_email']}'", conn)
+        st.table(df_my)
