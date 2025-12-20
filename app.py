@@ -8,7 +8,7 @@ import io
 
 # --- 1. VERİTABANI SİSTEMİ ---
 def init_db():
-    conn = sqlite3.connect('isletme_app.db', check_same_thread=False)
+    conn = sqlite3.connect('isletme_final.db', check_same_thread=False)
     c = conn.cursor()
     # Kullanıcılar
     c.execute('''CREATE TABLE IF NOT EXISTS users
