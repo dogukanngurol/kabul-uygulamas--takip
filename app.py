@@ -7,7 +7,7 @@ import io
 import json
 import zipfile
 
-# --- 1. VERİTABANI BAĞLANTISI VE KURULUM ---
+# --- 1. VERİTABANI VE KURULUM ---
 def get_db():
     conn = sqlite3.connect('saha_operasyon_v34.db', check_same_thread=False)
     return conn
@@ -27,6 +27,7 @@ def init_db():
     
     def h(p): return hashlib.sha256(p.encode()).hexdigest()
     pw = h('1234')
+    # Belirlediğiniz kullanıcıları otomatik açıyoruz
     users = [
         ('admin@sirket.com', pw, 'admin', 'Sistem Yöneticisi', 'Genel Müdür', '0555'),
         ('filiz@deneme.com', pw, 'admin', 'Filiz Hanım', 'Müdür', '0555'),
@@ -41,14 +42,14 @@ def init_db():
 
 init_db()
 
-# --- 2. YARDIMCI ARAÇLAR ---
+# --- 2. YARDIMCI FONKSİYONLAR ---
 def get_welcome_msg(name):
     hr = datetime.now().hour
     if 0 <= hr < 8: m = "İyi Geceler"
     elif 8 <= hr < 12: m = "Günaydın"
     elif 12 <= hr < 18: m = "İyi Günler"
     else: m = "İyi Akşamlar"
-    return f"✨ {m} **{name}**, İyi Çalışmalar!"
+    return f"{m} **{name}**, İyi Çalışmalar!"
 
 def to_excel(df):
     output = io.BytesIO()
@@ -65,13 +66,13 @@ def create_zip(photos_json):
             z.writestr(f"foto_{i+1}.jpg", bytes.fromhex(p_hex))
     return buf.getvalue()
 
-SEHIRLER = ["İstanbul", "Ankara", "İzmir", "Adana", "Antalya", "Bursa", "Diyarbakır", "Erzurum", "Gaziantep", "Konya", "Samsun", "Trabzon"]
+SEHIRLER = ["İstanbul", "Ankara", "İzmir", "Adana", "Antalya", "Bursa", "Diyarbakır", "Gaziantep", "Konya", "Samsun", "Trabzon"]
 
-# --- 3. OTURUM VE GİRİŞ ---
+# --- 3. GİRİŞ VE OTURUM ---
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
 if not st.session_state['logged_in']:
-    st.title("🔐 Saha Yönetim Girişi")
+    st.title("🔐 Operasyon Paneli Giriş")
     with st.form("login"):
         e = st.text_input("E-posta"); p = st.text_input("Şifre", type='password')
         if st.form_submit_button("Giriş"):
@@ -82,70 +83,61 @@ if not st.session_state['logged_in']:
                 st.rerun()
             else: st.error("Hatalı bilgiler.")
 else:
-    # Menü ve Yetki Kontrolü
+    # MENÜ YAPILANDIRMASI
     st.sidebar.title(f"👤 {st.session_state['user_name']}")
+    st.sidebar.caption(f"🏷️ {st.session_state['user_title']}")
+    
     if st.session_state['user_title'] in ['Müdür', 'Genel Müdür', 'Sistem Yöneticisi']:
         menu = ["🏠 Ana Sayfa", "➕ İş Atama & Takip", "📨 Giriş Onayları", "✅ Tamamlanan İşler", "💰 Hak Ediş", "📦 Zimmet & Envanter", "👥 Kullanıcılar"]
     else:
         menu = ["🏠 Ana Sayfa", "⏳ Atanan İşler", "📜 Çalışma Geçmişim", "🎒 Zimmetim", "👤 Profilim"]
     
-    for m in menu:
-        if st.sidebar.button(m, use_container_width=True): st.session_state.page = m; st.rerun()
+    for item in menu:
+        if st.sidebar.button(item, use_container_width=True): st.session_state.page = item; st.rerun()
     
     if st.sidebar.button("🔴 ÇIKIŞ", use_container_width=True): st.session_state.logged_in = False; st.rerun()
 
     cp = st.session_state.page
     conn = get_db()
 
-    # --- SAYFA: ANA SAYFA ---
+    # --- ANA SAYFA: SAYAÇLAR VE SELAMLAMA ---
     if cp == "🏠 Ana Sayfa":
         st.info(get_welcome_msg(st.session_state['user_name']))
         c1, c2, c3 = st.columns(3)
         c1.metric("📌 Bekleyen İşler", conn.execute("SELECT COUNT(*) FROM tasks WHERE status='Bekliyor'").fetchone()[0])
-        c2.metric("✅ Tamamlananlar", conn.execute("SELECT COUNT(*) FROM tasks WHERE status='Hak Edişi Alındı'").fetchone()[0])
+        c2.metric("✅ Biten İşler", conn.execute("SELECT COUNT(*) FROM tasks WHERE status='Hak Edişi Alındı'").fetchone()[0])
+        # Haftalık Sayaç (Örnek mantık: son 7 gün)
         weekly = conn.execute("SELECT COUNT(*) FROM tasks WHERE status IN ('Tamamlandı', 'Hak Edişi Alındı')").fetchone()[0]
         c3.metric("📊 Haftalık Toplam", weekly)
 
-    # --- SAYFA: SAHA ÇALIŞANI - ATANAN İŞLER ---
+    # --- SAHA ÇALIŞANI: ATANAN İŞLER VE TASLAK KAYDI ---
     elif cp == "⏳ Atanan İşler":
         st.header("⏳ Üstüme Atanan İşler")
         tasks = pd.read_sql(f"SELECT * FROM tasks WHERE assigned_to='{st.session_state['user_email']}' AND status IN ('Bekliyor', 'Kabul Yapılabilir')", conn)
-        if tasks.empty: st.info("Bekleyen iş yok.")
+        if tasks.empty: st.info("Bekleyen işiniz bulunmuyor.")
         for _, r in tasks.iterrows():
             with st.expander(f"📋 {r['title']} ({r['city']})"):
-                res_opts = ["Seçiniz", "Giriş Mail Onayı Bekler", "İŞ TAMAMLANDI", "GİRİŞ YAPILAMADI", "TEPKİLİ", "MAL SAHİBİ GELMİYOR"]
-                res = st.selectbox("Sonuç Tipi", res_opts, key=f"res_{r['id']}")
-                rep = st.text_area("İşte Yapılan Notlar", value=r['report'] if r['report'] else "", key=f"rep_{r['id']}")
-                fots = st.file_uploader("Dosya/Fotoğraf", accept_multiple_files=True, key=f"f_{r['id']}")
+                opts = ["Seçiniz", "Giriş Mail Onayı Bekler", "İŞ TAMAMLANDI", "GİRİŞ YAPILAMADI", "TEPKİLİ", "MAL SAHİBİ GELMİYOR"]
+                res = st.selectbox("İşlem Sonucu", opts, key=f"res_{r['id']}")
+                rep = st.text_area("İş Notları", value=r['report'] if r['report'] else "", key=f"rep_{r['id']}")
+                fots = st.file_uploader("Dosya/Fotoğraf Ekle", accept_multiple_files=True, key=f"f_{r['id']}")
                 
                 c1, c2 = st.columns(2)
                 if c1.button("💾 Taslağı Kaydet", key=f"s_{r['id']}"):
                     p_hex = json.dumps([f.read().hex() for f in fots]) if fots else r['photos_json']
                     conn.execute("UPDATE tasks SET report=?, photos_json=?, result_type=? WHERE id=?", (rep, p_hex, res, r['id']))
-                    conn.commit(); st.toast("Kaydedildi!")
+                    conn.commit(); st.success("Taslak kaydedildi!")
                 if c2.button("🚀 İşi Gönder", key=f"b_{r['id']}", type="primary"):
                     p_hex = json.dumps([f.read().hex() for f in fots]) if fots else r['photos_json']
-                    new_status = 'Giriş Mail Onayı Bekler' if res == 'Giriş Mail Onayı Bekler' else 'Onay Bekliyor'
-                    conn.execute("UPDATE tasks SET status=?, report=?, photos_json=?, result_type=?, updated_at=? WHERE id=?", 
-                                 (new_status, rep, p_hex, res, datetime.now().strftime("%d/%m/%Y %H:%M"), r['id']))
+                    status = 'Giriş Mail Onayı Bekler' if res == 'Giriş Mail Onayı Bekler' else 'Onay Bekliyor'
+                    conn.execute("UPDATE tasks SET status=?, result_type=?, report=?, photos_json=?, updated_at=? WHERE id=?", 
+                                 (status, res, rep, p_hex, datetime.now().strftime("%d/%m/%Y %H:%M"), r['id']))
                     conn.commit(); st.rerun()
 
-    # --- SAYFA: ÇALIŞAN - ZİMMET & GEÇMİŞ ---
-    elif cp == "🎒 Zimmetim":
-        st.header("🎒 Üzerimdeki Zimmetli Envanterler")
-        df = pd.read_sql(f"SELECT item_name, quantity, updated_by FROM inventory WHERE assigned_to='{st.session_state['user_email']}'", conn)
-        if df.empty: st.warning("Zimmet bulunamadı.")
-        else: st.table(df)
-
-    elif cp == "📜 Çalışma Geçmişim":
-        st.header("📜 Geçmiş İşlerim")
-        df = pd.read_sql(f"SELECT title, city, result_type, status, updated_at FROM tasks WHERE assigned_to='{st.session_state['user_email']}' AND status NOT IN ('Bekliyor')", conn)
-        st.dataframe(df, use_container_width=True)
-
-    # --- SAYFA: TAMAMLANAN İŞLER (ADMİN/MÜDÜR) ---
+    # --- TAMAMLANAN İŞLER: GELİŞMİŞ FİLTRELEME VE RAR ---
     elif cp == "✅ Tamamlanan İşler":
-        st.header("📑 İş Takip Arşivi")
-        f1, f2, f3 = st.columns(3)
+        st.header("📑 İş Takip ve Arşiv")
+        f1, f2, f3, f4 = st.columns(4)
         workers = pd.read_sql("SELECT email FROM users WHERE role='worker'", conn)['email'].tolist()
         f_user = f1.selectbox("Çalışan", ["Hepsi"] + workers)
         f_city = f2.selectbox("Şehir", ["Hepsi"] + SEHIRLER)
@@ -158,20 +150,33 @@ else:
         elif f_type == "Tamamlanamayan İşler": q += " AND result_type IN ('GİRİŞ YAPILAMADI', 'TEPKİLİ', 'MAL SAHİBİ GELMİYOR')"
         elif f_type == "Türk Telekom Onayında": q += " AND status='Türk Telekom Onayında'"
         elif f_type == "Bekleyen": q += " AND status='Bekliyor'"
+        elif f_type == "Hak Edişi Alındı": q += " AND status='Hak Edişi Alındı'"
 
         df = pd.read_sql(q, conn)
         st.dataframe(df[['id', 'title', 'assigned_to', 'city', 'result_type', 'status', 'updated_at']], use_container_width=True)
-        st.download_button("📊 Excel Olarak İndir", to_excel(df), "Rapor.xlsx")
+        st.download_button("📊 Excel İndir", to_excel(df), "Saha_Rapor.xlsx")
 
         for _, r in df.iterrows():
             with st.expander(f"🔍 Detay: {r['title']}"):
-                st.write(f"**Not:** {r['report']}")
+                st.write(f"**Rapor:** {r['report']}")
                 c1, c2, c3, c4 = st.columns(4)
                 if r['photos_json']:
-                    c1.download_button("📂 ZIP İndir", create_zip(r['photos_json']), f"fotos_{r['id']}.zip", key=f"z_{r['id']}")
+                    c1.download_button("📂 Fotoğrafları İndir (ZIP)", create_zip(r['photos_json']), f"is_{r['id']}.zip", key=f"z_{r['id']}")
                 if c2.button("🔵 TT Onayında", key=f"tt_{r['id']}"):
                     conn.execute("UPDATE tasks SET status='Türk Telekom Onayında' WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
                 if c3.button("🟡 Bekleyen", key=f"bk_{r['id']}"):
                     conn.execute("UPDATE tasks SET status='Bekliyor' WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
-                if c4.button("🟢 Hak Edişe", key=f"he_{r['id']}"):
+                if c4.button("🟢 Hak Edişe Gönder", key=f"he_{r['id']}"):
                     conn.execute("UPDATE tasks SET hakedis_durum='Hak Ediş Bekliyor', status='Tamamlandı' WHERE id=?", (r['id'],)); conn.commit(); st.rerun()
+
+    # --- ZİMMET VE ENVANTER (ÇALIŞAN DÜZELTİLMİŞ) ---
+    elif cp == "🎒 Zimmetim":
+        st.header("🎒 Üzerimdeki Zimmetli Envanterler")
+        df = pd.read_sql(f"SELECT item_name, quantity, updated_by FROM inventory WHERE assigned_to='{st.session_state['user_email']}'", conn)
+        if df.empty: st.warning("Üzerinizde kayıtlı zimmet bulunamadı.")
+        else: st.table(df)
+
+    elif cp == "📜 Çalışma Geçmişim":
+        st.header("📜 Kişisel Geçmişim")
+        df = pd.read_sql(f"SELECT title, city, result_type, status, updated_at FROM tasks WHERE assigned_to='{st.session_state['user_email']}' AND status != 'Bekliyor'", conn)
+        st.dataframe(df, use_container_width=True)
