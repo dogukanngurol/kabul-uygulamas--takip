@@ -6,27 +6,39 @@ import hashlib
 from PIL import Image
 import io
 
-# --- 1. VERİTABANI SİSTEMİ ---
+# --- 1. VERİTABANI SİSTEMİ (HATA DÜZELTİCİ VERSİYON) ---
 def init_db():
-    conn = sqlite3.connect('isletme_final.db', check_same_thread=False)
+    conn = sqlite3.connect('isletme_final_v3.db', check_same_thread=False)
     c = conn.cursor()
+    
     # Kullanıcılar
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (email TEXT PRIMARY KEY, password TEXT, role TEXT, name TEXT)''')
-    # Görevler (Gelişmiş)
+    
+    # Görevler (Eğer tablo yoksa oluşturur)
     c.execute('''CREATE TABLE IF NOT EXISTS tasks
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, assigned_to TEXT, 
                   title TEXT, description TEXT, status TEXT, 
                   report TEXT, photo BLOB, updated_at TEXT)''')
+    
+    # EĞER TABLO VARSA AMA SÜTUNLAR EKSİKSE (Hata Alan Kısım Burasıydı)
+    # Bu kodlar sütunları tek tek kontrol eder ve yoksa ekler
+    columns = [col[1] for col in c.execute("PRAGMA table_info(tasks)").fetchall()]
+    if 'title' not in columns:
+        c.execute("ALTER TABLE tasks ADD COLUMN title TEXT")
+    if 'photo' not in columns:
+        c.execute("ALTER TABLE tasks ADD COLUMN photo BLOB")
+    if 'updated_at' not in columns:
+        c.execute("ALTER TABLE tasks ADD COLUMN updated_at TEXT")
+
     # Zimmet
     c.execute('''CREATE TABLE IF NOT EXISTS inventory
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, item_name TEXT, 
                   assigned_to TEXT, quantity INTEGER)''')
     
-    # Varsayılan Admin ve İstediğin Deneme Kullanıcısı
+    # Varsayılan Admin ve Deneme Kullanıcısı
     admin_pw = hashlib.sha256("1234".encode()).hexdigest()
     worker_pw = hashlib.sha256("1234".encode()).hexdigest()
-    
     c.execute("INSERT OR IGNORE INTO users VALUES ('admin@sirket.com', ?, 'admin', 'Genel Müdür')", (admin_pw,))
     c.execute("INSERT OR IGNORE INTO users VALUES ('deneme123@dev.com', ?, 'worker', 'Deneme Çalışan')", (worker_pw,))
     
