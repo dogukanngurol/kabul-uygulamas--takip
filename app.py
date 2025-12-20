@@ -4,17 +4,19 @@ import pandas as pd
 from datetime import datetime
 import hashlib
 import io
+import json
 from docx import Document
 from docx.shared import Inches
 
-# --- 1. VERİTABANI YÖNETİMİ ---
+# --- 1. VERİTABANI VE YAPI ---
 def init_db():
-    conn = sqlite3.connect('isletme_saha_v11.db', check_same_thread=False)
+    conn = sqlite3.connect('isletme_saha_v12.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, password TEXT, role TEXT, name TEXT, title TEXT)')
+    # Çoklu fotoğraf için 'photos_json' sütunu kullanacağız
     c.execute('''CREATE TABLE IF NOT EXISTS tasks 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, assigned_to TEXT, title TEXT, 
-                  description TEXT, status TEXT, report TEXT, photo BLOB, updated_at TEXT)''')
+                  description TEXT, status TEXT, report TEXT, photos_json TEXT, updated_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS inventory 
                  (id INTEGER PRIMARY KEY AUTOINCREMENT, item_name TEXT, 
                   assigned_to TEXT, quantity INTEGER, updated_by TEXT)''')
@@ -29,28 +31,49 @@ conn = init_db()
 
 def make_hash(p): return hashlib.sha256(str.encode(p)).hexdigest()
 
-def get_word_report(df):
+# --- 2. ÖZEL WORD RAPORU OLUŞTURUCU ---
+def create_single_task_report(row):
     doc = Document()
-    doc.add_heading('SAHA İŞ BİTİRME RAPORU', 0)
-    for _, row in df.iterrows():
-        doc.add_heading(f"İŞ: {row['Başlık']}", level=1)
-        doc.add_paragraph(f"Personel: {row['Çalışan']} | Tarih: {row['Tarih']}")
-        doc.add_paragraph(f"Not: {row['Rapor']}")
-        if row['photo']:
-            try: doc.add_picture(io.BytesIO(row['photo']), width=Inches(4))
-            except: pass
-        doc.add_page_break()
+    doc.add_heading('İŞ BİTİRME VE SAHA RAPORU', 0)
+    
+    table = doc.add_table(rows=1, cols=2)
+    hdr_cells = table.rows[0].cells
+    hdr_cells[0].text = 'İş Başlığı:'
+    hdr_cells[1].text = str(row['title'])
+    
+    row_cells = table.add_row().cells
+    row_cells[0].text = 'Sorumlu Personel:'
+    row_cells[1].text = f"{row['assigned_to']}"
+    
+    row_cells = table.add_row().cells
+    row_cells[0].text = 'Tamamlanma Tarihi:'
+    row_cells[1].text = str(row['updated_at'])
+
+    doc.add_heading('Personel Notu / Raporu', level=2)
+    doc.add_paragraph(str(row['report']))
+
+    if row['photos_json']:
+        doc.add_heading('Saha Fotoğrafları', level=2)
+        photos = json.loads(row['photos_json'])
+        for idx, p_hex in enumerate(photos):
+            try:
+                img_data = bytes.fromhex(p_hex)
+                doc.add_picture(io.BytesIO(img_data), width=Inches(5))
+                doc.add_paragraph(f"Fotoğraf {idx+1}")
+            except:
+                doc.add_paragraph(f"Hata: Fotoğraf {idx+1} yüklenemedi.")
+    
     bio = io.BytesIO()
     doc.save(bio)
     return bio.getvalue()
 
-# --- 2. ARAYÜZ ---
-st.set_page_config(page_title="Şirket Yönetim Sistemi", layout="wide")
+# --- 3. ANA ARAYÜZ ---
+st.set_page_config(page_title="Saha Yönetim v12", layout="wide")
 
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
 if not st.session_state['logged_in']:
-    st.title("🔐 Giriş Paneli")
+    st.title("🔐 Şirket Giriş Paneli")
     e = st.text_input("E-posta")
     p = st.text_input("Şifre", type='password')
     if st.button("Sisteme Giriş"):
@@ -66,7 +89,7 @@ else:
     st.sidebar.caption(f"📌 {st.session_state['user_title']}")
     
     if st.session_state['role'] == 'admin':
-        menu = ["Ana Sayfa", "İş Atama & Takip", "Zimmet/Envanter", "Kullanıcı Yönetimi"]
+        menu = ["Ana Sayfa", "İş Atama & Takip", "Tamamlanan İşler", "Zimmet/Envanter", "Kullanıcı Yönetimi"]
     else:
         menu = ["Üstüme Atanan İşler", "Tamamlanan İşlerim", "Zimmetim"]
     
@@ -77,95 +100,123 @@ else:
 
     # --- EKRANLAR ---
     if choice == "Ana Sayfa":
-        st.header("📊 Genel Durum")
+        st.header("📊 Genel Operasyon Özeti")
         tasks = pd.read_sql("SELECT status FROM tasks", conn)
         c1, c2 = st.columns(2)
         c1.metric("📌 Bekleyen İşler", len(tasks[tasks['status']=='Bekliyor']))
         c2.metric("✅ Tamamlanan İşler", len(tasks[tasks['status']=='Tamamlandı']))
 
     elif choice == "İş Atama & Takip":
-        t1, t2 = st.tabs(["➕ Yeni İş Ata", "📑 Saha Raporları"])
-        with t1:
-            workers = pd.read_sql("SELECT email, name FROM users WHERE role='worker'", conn)
-            with st.form("is_ata"):
-                tit = st.text_input("İş Başlığı")
-                who = st.selectbox("Personel", workers['email'])
-                dsc = st.text_area("İş Detayı / Adres")
-                if st.form_submit_button("Görevi Gönder"):
-                    conn.execute("INSERT INTO tasks (assigned_to, title, description, status) VALUES (?,?,?,?)", (who, tit, dsc, 'Bekliyor'))
-                    conn.commit()
-                    st.success("İş atandı!")
-        with t2:
-            df_d = pd.read_sql("SELECT assigned_to as 'Çalışan', title as 'Başlık', report as 'Rapor', updated_at as 'Tarih', photo FROM tasks WHERE status='Tamamlandı'", conn)
-            if not df_d.empty:
-                st.download_button("📝 Word Raporu Al (Fotoğraflı)", data=get_word_report(df_d), file_name="saha_raporu.docx")
-                st.dataframe(df_d.drop('photo', axis=1), use_container_width=True)
+        st.header("🆕 Yeni İş Ataması Yap")
+        workers = pd.read_sql("SELECT email, name FROM users WHERE role='worker'", conn)
+        with st.form("is_ata"):
+            tit = st.text_input("İş Başlığı")
+            who = st.selectbox("Görevli Personel", workers['email'])
+            dsc = st.text_area("İş Detayı / Adres")
+            if st.form_submit_button("Görevi Personel Ekranına Gönder"):
+                conn.execute("INSERT INTO tasks (assigned_to, title, description, status) VALUES (?,?,?,?)", (who, tit, dsc, 'Bekliyor'))
+                conn.commit()
+                st.success(f"{tit} işi başarıyla atandı.")
+
+    elif choice == "Tamamlanan İşler":
+        st.header("📑 Tamamlanan İşler ve Raporlar")
+        df_d = pd.read_sql("SELECT * FROM tasks WHERE status='Tamamlandı' ORDER BY updated_at DESC", conn)
+        if df_d.empty:
+            st.info("Henüz tamamlanan bir iş bulunmuyor.")
+        else:
+            for idx, row in df_d.iterrows():
+                with st.expander(f"📍 {row['title']} - (Personel: {row['assigned_to']})"):
+                    col_info, col_btn = st.columns([3, 1])
+                    col_info.write(f"**Tamamlanma:** {row['updated_at']}")
+                    col_info.write(f"**Rapor:** {row['report']}")
+                    
+                    # Her iş için ayrı Word indirme butonu
+                    report_data = create_single_task_report(row)
+                    col_btn.download_button(
+                        label="📄 Word Raporu İndir",
+                        data=report_data,
+                        file_name=f"Rapor_{row['title']}_{row['id']}.docx",
+                        key=f"dl_{row['id']}"
+                    )
+                    
+                    # Fotoğrafları önizle
+                    if row['photos_json']:
+                        photos = json.loads(row['photos_json'])
+                        cols = st.columns(3)
+                        for i, p_hex in enumerate(photos):
+                            cols[i % 3].image(bytes.fromhex(p_hex), use_container_width=True)
 
     elif choice == "Kullanıcı Yönetimi":
-        st.header("👥 Personel Listesi")
-        with st.expander("➕ Yeni Kullanıcı Ekle"):
+        st.header("👥 Personel ve Unvan Yönetimi")
+        with st.expander("➕ Yeni Kullanıcı Tanımla"):
             with st.form("u_add"):
-                n_e, n_n = st.columns(2)
-                email_val = n_e.text_input("E-posta")
-                name_val = n_n.text_input("Ad Soyad")
-                n_t = st.selectbox("Unvan", ["Müdür", "Müdür Yrd.", "Tekniker", "Saha Personeli", "Ofis"])
+                n_e = st.text_input("E-posta")
+                n_n = st.text_input("Ad Soyad")
+                n_t = st.selectbox("Unvan", ["Müdür", "Müdür Yrd.", "Tekniker", "Saha Ekibi", "Ofis"])
                 n_p = st.text_input("Şifre", type='password')
-                n_r = st.selectbox("Yetki", ["worker", "admin"])
-                if st.form_submit_button("Kaydet"):
-                    conn.execute("INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)", (email_val, make_hash(n_p), n_r, name_val, n_t))
+                n_r = st.selectbox("Sistem Yetkisi", ["worker", "admin"])
+                if st.form_submit_button("Personeli Kaydet"):
+                    conn.execute("INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)", (n_e, make_hash(n_p), n_r, n_n, n_t))
                     conn.commit()
                     st.rerun()
-        u_list = pd.read_sql("SELECT name as 'Ad Soyad', email as 'E-posta', title as 'Unvan' FROM users", conn)
-        st.dataframe(u_list, use_container_width=True)
+        
+        u_list = pd.read_sql("SELECT name, email, title, role FROM users", conn)
+        st.table(u_list)
         for _, r in u_list.iterrows():
-            if r['E-posta'] != 'admin@sirket.com':
-                if st.button(f"🗑️ {r['Ad Soyad']} Sil", key=r['E-posta']):
-                    conn.execute("DELETE FROM users WHERE email=?", (r['E-posta'],))
+            if r['email'] != 'admin@sirket.com':
+                if st.button(f"🗑️ {r['name']} Hesabını Sil", key=r['email']):
+                    conn.execute("DELETE FROM users WHERE email=?", (r['email'],))
                     conn.commit()
                     st.rerun()
 
     elif choice == "Üstüme Atanan İşler":
         st.header("⏳ Tamamlanacak İşlerim")
         my_tasks = pd.read_sql(f"SELECT * FROM tasks WHERE assigned_to='{st.session_state['user_email']}' AND status='Bekliyor'", conn)
-        if my_tasks.empty: st.info("Şu an bekleyen bir işiniz bulunmuyor.")
+        if my_tasks.empty: st.info("Şu an bekleyen bir göreviniz bulunmuyor.")
         for _, row in my_tasks.iterrows():
-            with st.expander(f"📍 {row['title']}"):
-                st.write(f"**Açıklama:** {row['description']}")
-                rep = st.text_area("Rapor Notunuz", key=f"r_{row['id']}")
-                img = st.file_uploader("İş Sonu Fotoğrafı", key=f"i_{row['id']}")
-                if st.button("İşi Tamamla", key=f"b_{row['id']}"):
-                    if img:
-                        conn.execute("UPDATE tasks SET status='Tamamlandı', report=?, photo=?, updated_at=? WHERE id=?", 
-                                     (rep, img.read(), datetime.now().strftime("%d/%m/%Y %H:%M"), row['id']))
+            with st.expander(f"📌 {row['title']}"):
+                st.write(f"**İş Detayı:** {row['description']}")
+                rep = st.text_area("İş Sonu Rapor Notu", key=f"r_{row['id']}")
+                # ÇOKLU FOTOĞRAF YÜKLEME
+                uploaded_files = st.file_uploader("Fotoğrafları Yükle (Birden fazla seçebilirsiniz)", 
+                                                 type=['jpg','png','jpeg'], 
+                                                 accept_multiple_files=True,
+                                                 key=f"f_{row['id']}")
+                
+                if st.button("İşi Tamamla ve Fotoğrafları Gönder", key=f"b_{row['id']}"):
+                    if uploaded_files:
+                        photo_list = []
+                        for f in uploaded_files:
+                            photo_list.append(f.read().hex()) # Veritabanına kaydetmek için hex formatına çeviriyoruz
+                        
+                        photos_json = json.dumps(photo_list)
+                        conn.execute("UPDATE tasks SET status='Tamamlandı', report=?, photos_json=?, updated_at=? WHERE id=?", 
+                                     (rep, photos_json, datetime.now().strftime("%d/%m/%Y %H:%M"), row['id']))
                         conn.commit()
-                        st.success("İş raporlandı!")
+                        st.success("Tüm fotoğraflar başarıyla yüklendi ve iş tamamlandı!")
                         st.rerun()
-                    else: st.error("Fotoğraf yüklemek zorunludur!")
+                    else: st.error("Lütfen en az bir fotoğraf yükleyin!")
 
     elif choice == "Tamamlanan İşlerim":
-        st.header("✅ Geçmiş İşlerim")
-        df_history = pd.read_sql(f"SELECT title as 'İş Başlığı', report as 'Personel Notu', updated_at as 'Tamamlanma Tarihi' FROM tasks WHERE assigned_to='{st.session_state['user_email']}' AND status='Tamamlandı' ORDER BY updated_at DESC", conn)
-        if df_history.empty:
-            st.warning("Henüz tamamladığınız bir iş bulunmuyor.")
-        else:
-            st.table(df_history)
+        st.header("✅ Geçmiş İş Kayıtlarım")
+        df_history = pd.read_sql(f"SELECT title as 'İş Başlığı', report as 'Not', updated_at as 'Tarih' FROM tasks WHERE assigned_to='{st.session_state['user_email']}' AND status='Tamamlandı' ORDER BY updated_at DESC", conn)
+        st.dataframe(df_history, use_container_width=True)
 
     elif choice == "Zimmetim" or choice == "Zimmet/Envanter":
         st.header("📦 Zimmet & Envanter")
         if st.session_state['role'] == 'admin':
-            df_i = pd.read_sql("SELECT item_name as 'Eşya', assigned_to as 'Personel', quantity as 'Adet', updated_by as 'Düzenleyen' FROM inventory", conn)
+            df_i = pd.read_sql("SELECT item_name as 'Eşya', assigned_to as 'Personel', quantity as 'Adet', updated_by as 'Ekleyen' FROM inventory", conn)
             st.dataframe(df_i, use_container_width=True)
         else:
-            df_i = pd.read_sql(f"SELECT item_name as 'Eşya', quantity as 'Adet', updated_by as 'Ekleyen' FROM inventory WHERE assigned_to='{st.session_state['user_email']}'", conn)
+            df_i = pd.read_sql(f"SELECT item_name, quantity FROM inventory WHERE assigned_to='{st.session_state['user_email']}'", conn)
             st.table(df_i)
         
-        with st.expander("➕ Envanter Kaydı Oluştur"):
-            with st.form("inv_add"):
-                i_n = st.text_input("Eşya Adı")
-                i_q = st.number_input("Adet", 1)
-                target = st.session_state['user_email'] if st.session_state['role'] == 'worker' else st.text_input("Personel E-posta (Zimmetlenecek Kişi)")
-                if st.form_submit_button("Kaydet"):
-                    conn.execute("INSERT INTO inventory (item_name, assigned_to, quantity, updated_by) VALUES (?,?,?,?)", 
-                                 (i_n, target, i_q, st.session_state['user_name']))
-                    conn.commit()
-                    st.rerun()
+        with st.form("inv_add"):
+            i_n = st.text_input("Eşya/Ekipman Adı")
+            i_q = st.number_input("Adet", 1)
+            target = st.session_state['user_email'] if st.session_state['role'] == 'worker' else st.text_input("Personel E-postası")
+            if st.form_submit_button("Envantere İşle"):
+                conn.execute("INSERT INTO inventory (item_name, assigned_to, quantity, updated_by) VALUES (?,?,?,?)", 
+                             (i_n, target, i_q, st.session_state['user_name']))
+                conn.commit()
+                st.rerun()
