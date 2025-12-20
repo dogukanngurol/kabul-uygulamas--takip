@@ -10,7 +10,7 @@ from docx.shared import Inches
 
 # --- 1. VERİTABANI VE MANTIK ---
 def init_db():
-    conn = sqlite3.connect('isletme_kurumsal_v15.db', check_same_thread=False)
+    conn = sqlite3.connect('isletme_kurumsal_v16.db', check_same_thread=False)
     c = conn.cursor()
     c.execute('CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, password TEXT, role TEXT, name TEXT, title TEXT)')
     c.execute('''CREATE TABLE IF NOT EXISTS tasks 
@@ -63,7 +63,7 @@ def create_excel(row):
     writer.close(); return output.getvalue()
 
 # --- 3. ARAYÜZ ---
-st.set_page_config(page_title="Saha Yönetim v15", layout="wide")
+st.set_page_config(page_title="Saha Yönetim v16", layout="wide")
 
 if 'logged_in' not in st.session_state: st.session_state['logged_in'] = False
 
@@ -78,12 +78,11 @@ if not st.session_state['logged_in']:
                 st.rerun()
             else: st.error("Hatalı giriş!")
 else:
-    # --- MODERN SIDEBAR TASARIMI ---
+    # --- MODERN SIDEBAR ---
     st.sidebar.title(f"👤 {st.session_state['user_full_name']}")
     st.sidebar.caption(f"🏷️ {st.session_state['user_title']}")
     st.sidebar.markdown("---")
     
-    # Menü Butonları (Emoji ve Kutu Formatı)
     if st.session_state['role'] == 'admin':
         if st.sidebar.button("🏠 Ana Sayfa", use_container_width=True): st.session_state.page = "Ana Sayfa"
         if st.sidebar.button("➕ İş Atama & Takip", use_container_width=True): st.session_state.page = "İş Atama & Takip"
@@ -101,17 +100,28 @@ else:
         st.session_state['logged_in'] = False
         st.rerun()
 
-    # Sayfa yönlendirme kontrolü
     if 'page' not in st.session_state: st.session_state.page = "Ana Sayfa"
     choice = st.session_state.page
 
     # --- EKRANLAR ---
     if choice == "Ana Sayfa":
         st.info(get_welcome_message(st.session_state['user_full_name']))
-        tasks = pd.read_sql("SELECT status FROM tasks", conn)
+        
+        # Kişisel Sayaç Mantığı
+        if st.session_state['role'] == 'admin':
+            # Admin her şeyi görür
+            tasks_df = pd.read_sql("SELECT status FROM tasks", conn)
+        else:
+            # Çalışan sadece kendi işlerini görür
+            tasks_df = pd.read_sql(f"SELECT status FROM tasks WHERE assigned_to='{st.session_state['user_email']}'", conn)
+        
         c1, c2 = st.columns(2)
-        c1.metric("📌 Bekleyen İşler", len(tasks[tasks['status']=='Bekliyor']))
-        c2.metric("✅ Tamamlanan İşler", len(tasks[tasks['status']=='Tamamlandı']))
+        # Eğer hiç iş yoksa empty dataframe gelir, count 0 olur.
+        wait_count = len(tasks_df[tasks_df['status']=='Bekliyor']) if not tasks_df.empty else 0
+        done_count = len(tasks_df[tasks_df['status']=='Tamamlandı']) if not tasks_df.empty else 0
+        
+        c1.metric("📌 Bekleyen İşler", wait_count)
+        c2.metric("✅ Tamamlanan İşler", done_count)
 
     elif choice == "Tamamlanan İşler":
         st.header("📑 Tamamlanan İş Raporları")
@@ -169,5 +179,5 @@ else:
             n, q = st.text_input("Eşya"), st.number_input("Adet", 1)
             target = st.session_state['user_email'] if st.session_state['role'] == 'worker' else st.text_input("Personel E-posta")
             if st.form_submit_button("Envantere Ekle"):
-                conn.execute("INSERT INTO inventory (item_name, assigned_to, quantity, updated_by) VALUES (?,?,?,?)", (n, target, q, st.session_state['user_name']))
+                conn.execute("INSERT INTO inventory (item_name, assigned_to, quantity, updated_by) VALUES (?,?,?,?)", (n, target, q, st.session_state['user_full_name']))
                 conn.commit(); st.rerun()
