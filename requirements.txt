@@ -2,5 +2,3 @@ streamlit
 pandas
 xlsxwriter
 python-docx
-psycopg2-binary
-sqlalchemy
