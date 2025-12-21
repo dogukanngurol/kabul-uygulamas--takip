@@ -1,78 +1,73 @@
 import streamlit as st
 import pandas as pd
+import sqlite3
 from datetime import datetime
 
-# --- YARDIMCI FONKSİYON: FİLTRELEME VE BOŞ EKRAN KONTROLÜ ---
-def render_filtered_view(df, page_title, is_hakedis=False):
-    st.header(f"📋 {page_title}")
+# --- 1. SESSION STATE BAŞLATMA (Hata Almamak İçin En Üstte Olmalı) ---
+if 'logged_in' not in st.session_state:
+    st.session_state['logged_in'] = False
+if 'page' not in st.session_state:
+    st.session_state['page'] = "🏠 Ana Sayfa"
+
+# --- 2. FİLTRELEME VE BOŞ EKRAN YÖNETİCİSİ ---
+def render_page_with_filters(query, title):
+    st.header(f"{title}")
     
+    # Veritabanı Bağlantısı
+    conn = sqlite3.connect('anatolia_v65.db')
+    try:
+        df = pd.read_sql(query, conn)
+    except:
+        df = pd.DataFrame() # Tablo yoksa boş dön
+    finally:
+        conn.close()
+
+    # 13, 31, 32, 33, 34, 35. MADDELER: FİLTRELEME PANELİ
+    st.write("### 🔍 Filtreleme Seçenekleri")
+    c1, c2, c3, c4 = st.columns(4)
+    
+    with c1: f_tarih = st.date_input("📅 Tarih", [], key=f"date_{title}")
+    with c2: 
+        p_list = ["Hepsi"] + (df['assigned_to'].unique().tolist() if not df.empty else [])
+        f_pers = st.selectbox("👷 Personel", p_list, key=f"pers_{title}")
+    with c3: 
+        # 32. MADDE: 81 İl Listesi buraya entegre edilebilir
+        s_list = ["Hepsi"] + (df['city'].unique().tolist() if not df.empty else [])
+        f_sehir = st.selectbox("📍 Şehir", s_list, key=f"city_{title}")
+    with c4: 
+        d_list = ["Hepsi"] + (df['status'].unique().tolist() if not df.empty else [])
+        f_durum = st.selectbox("🚦 Durum", d_list, key=f"status_{title}")
+
+    # --- 37. MADDE: BOŞ EKRAN KONTROLÜ ---
     if df.empty:
-        # Madde 37: Eğer tablo boşsa sadece filtreleri göster ve uyarı ver
-        st.info(f"✨ Şu anda gösterilecek bir '{page_title}' kaydı bulunmamaktadır.")
-        
-        # Boş olsa bile filtre kutucuklarını göster (Kullanıcı deneyimi için)
-        with st.expander("🔍 Filtreleme Seçenekleri (Aktif Veri Yok)"):
-            c1, c2, c3, c4 = st.columns(4)
-            c1.date_input("Tarih Seçin", key=f"d_{page_title}")
-            c2.selectbox("Personel", ["Tüm Personeller"], key=f"p_{page_title}")
-            c3.selectbox("Şehir", ["Tüm Şehirler"], key=f"s_{page_title}")
-            c4.selectbox("Durum", ["Hepsi"], key=f"st_{page_title}")
+        st.warning(f"⚠️ Gösterilecek {title} Bulunmamaktadır.")
         return
 
-    # --- Madde 31, 32, 33, 34, 35: AKTİF FİLTRELEME PANELİ ---
-    with st.sidebar.expander("🎯 Görünüm Filtreleri", expanded=True):
-        # Tarih Filtresi
-        f_tarih = st.date_input("📅 Tarih Aralığı", [], key=f"date_{page_title}")
-        
-        # Personel Filtresi (Madde 33)
-        personel_list = ["Hepsi"] + sorted(df['assigned_to'].unique().tolist())
-        f_pers = st.selectbox("👷 Personel", personel_list, key=f"pers_{page_title}")
-        
-        # Şehir Filtresi (Madde 32)
-        sehir_list = ["Hepsi"] + sorted(df['city'].unique().tolist())
-        f_sehir = st.selectbox("📍 Şehir", sehir_list, key=f"city_{page_title}")
-        
-        # Durum Filtresi (Madde 34 & 35)
-        # Sadece yetkililerin göreceği özel durumlar otomatik olarak df içinde gelmelidir
-        durum_list = ["Hepsi"] + sorted(df['status'].unique().tolist())
-        f_durum = st.selectbox("🚦 Durum", durum_list, key=f"status_{page_title}")
+    # Filtreleme Mantığı
+    filt_df = df.copy()
+    if f_pers != "Hepsi": filt_df = filt_df[filt_df['assigned_to'] == f_pers]
+    if f_sehir != "Hepsi": filt_df = filt_df[filt_df['city'] == f_sehir]
+    if f_durum != "Hepsi": filt_df = filt_df[filt_df['status'] == f_durum]
 
-    # Filtreleri Uygula
-    filtrelenmis_df = df.copy()
+    # --- TABLO VE EXCEL (9, 30. MADDELER) ---
+    st.dataframe(filt_df, use_container_width=True)
     
-    if f_pers != "Hepsi":
-        filtrelenmis_df = filtrelenmis_df[filtrelenmis_df['assigned_to'] == f_pers]
-    if f_sehir != "Hepsi":
-        filtrelenmis_df = filtrelenmis_df[filtrelenmis_df['city'] == f_sehir]
-    if f_durum != "Hepsi":
-        filtrelenmis_df = filtrelenmis_df[filtrelenmis_df['status'] == f_durum]
-    if len(f_tarih) == 2:
-        filtrelenmis_df = filtrelenmis_df[
-            (pd.to_datetime(filtrelenmis_df['created_at']).dt.date >= f_tarih[0]) & 
-            (pd.to_datetime(filtrelenmis_df['created_at']).dt.date <= f_tarih[1])
-        ]
+    csv = filt_df.to_csv(index=False).encode('utf-8-sig')
+    st.download_button("📥 Excel Olarak İndir", csv, f"{title}.csv", "text/csv")
 
-    # --- SONUÇLARI GÖSTER ---
-    if filtrelenmis_df.empty:
-        st.warning("⚠️ Seçili filtrelere uygun sonuç bulunamadı.")
-    else:
-        st.dataframe(filtrelenmis_df, use_container_width=True)
-        
-        # Madde 9 & 30: Excel İndirme Özelliği
-        csv = filtrelenmis_df.to_csv(index=False).encode('utf-8-sig')
-        st.download_button(
-            label="📥 Filtrelenmiş Veriyi Excel (CSV) Olarak İndir",
-            data=csv,
-            file_name=f"{page_title}_Rapor_{datetime.now().strftime('%d-%m-%Y')}.csv",
-            mime='text/csv',
-        )
+# --- 3. ANA UYGULAMA MANTIK AKIŞI ---
+if not st.session_state['logged_in']:
+    # ŞİFRE EKRANI BURAYA GELECEK
+    st.title("🔐 Anatolia Bilişim Giriş")
+    # ... login kodlarınız ...
+else:
+    # Sayfa Kontrolleri (Hata veren kısım burasıydı, artık güvenli)
+    if st.session_state.page == "✅ Tamamlanan İşler":
+        render_page_with_filters("SELECT * FROM tasks WHERE status='Tamamlandı'", "Tamamlanan İşler")
+    
+    elif st.session_state.page == "📋 Atanan İşler":
+        render_page_with_filters("SELECT * FROM tasks WHERE status='Bekliyor'", "Atanan İşler")
 
-# --- SAYFA YÖNLENDİRMELERİNDE KULLANIM ÖRNEĞİ ---
-if st.session_state.page == "✅ Tamamlanan İşler":
-    # Veritabanından veriyi çek (Örnektir)
-    # raw_df = pd.read_sql("SELECT * FROM tasks WHERE status IN ('İŞ TAMAMLANDI', 'GİRİŞ YAPILAMADI', 'TEPKİLİ', 'MAL SAHİBİ GELMİYOR')", conn)
-    render_filtered_view(raw_df, "Tamamlanan İşler")
-
-elif st.session_state.page == "💰 Hak Ediş":
-    # Madde 23: Hak Ediş Bekleniyor / Alındı durumlarını içeren tabloyu çek
-    render_filtered_view(hakedis_df, "Hak Ediş Paneli", is_hakedis=True)
+    elif st.session_state.page == "💰 Hak Ediş":
+        # 23. MADDE: Hak Ediş Seçenekleri
+        render_page_with_filters("SELECT * FROM tasks WHERE status LIKE 'Hak Ediş%'", "Hak Ediş Paneli")
