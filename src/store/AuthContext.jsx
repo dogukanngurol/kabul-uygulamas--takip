@@ -1,18 +1,13 @@
-import React, { createContext, useState, useContext } from 'react';
+import streamlit as st
 
-const AuthContext = createContext();
+def init_auth():
+    if "user" not in st.session_state:
+        st.session_state.user = None
 
-export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null); // { name: 'Demo', role: 'Admin' }
+def login(role):
+    st.session_state.user = {"name": "Demo Kullanıcı", "role": role}
+    st.rerun()
 
-  const login = (role) => setUser({ name: 'Demo Kullanıcı', role });
-  const logout = () => setUser(null);
-
-  return (
-    <AuthContext.Provider value={{ user, login, logout }}>
-      {children}
-    </AuthContext.Provider>
-  );
-};
-
-export const useAuth = () => useContext(AuthContext);
+def logout():
+    st.session_state.user = None
+    st.rerun()
