@@ -3,34 +3,20 @@ import pandas as pd
 from datetime import datetime
 import io
 
-# --- 1. VERİ YAPILARI VE AYARLAR ---
-st.set_page_config(page_title="Anatoli Bilişim", layout="wide")
-
-# Kullanıcı Veritabanı
+# --- 1. VERİ YAPILARI ---
 if 'users' not in st.session_state:
     st.session_state['users'] = {
         "dogukan": {"sifre": "1234", "ad_soyad": "Doğukan Gürol", "yetki": "Admin / Müdür"},
-        "yonetici01": {"sifre": "4321", "ad_soyad": "Ahmet Yılmaz", "yetki": "Yönetici"},
         "saha01": {"sifre": "0000", "ad_soyad": "Mehmet Saha", "yetki": "Saha Personeli"}
     }
 
-# İş Veritabanı (Simüle edilmiş)
 if 'is_verisi' not in st.session_state:
-    st.session_state['is_verisi'] = pd.DataFrame(columns=[
-        "İş ID", "Tarih", "İş Başlığı", "Personel", "Şehir", "Durum", "Notlar"
+    # Başlangıçta örnek bir iş atayalım ki test edebilesin
+    st.session_state['is_verisi'] = pd.DataFrame([
+        {"İş ID": 1, "Tarih": "2023-10-27", "İş Başlığı": "Örnek Kurulum", "Personel": "Mehmet Saha", "Şehir": "İstanbul", "Durum": "Atandı", "Notlar": ""}
     ])
 
-# 81 İl
-sehirler = ["Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin", "Aydın", "Balıkesir", "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Bursa", "Çanakkale", "Çankırı", "Çorum", "Denizli", "Diyarbakır", "Edirne", "Elazığ", "Erzincan", "Erzurum", "Eskişehir", "Gaziantep", "Giresun", "Gümüşhane", "Hakkari", "Hatay", "Isparta", "Mersin", "İstanbul", "İzmir", "Kars", "Kastamonu", "Kayseri", "Kırklareli", "Kırşehir", "Kocaeli", "Konya", "Kütahya", "Malatya", "Manisa", "Kahramanmaraş", "Mardin", "Muğla", "Muş", "Nevşehir", "Niğde", "Ordu", "Rize", "Sakarya", "Samsun", "Siirt", "Sinop", "Sivas", "Tekirdağ", "Tokat", "Trabzon", "Tunceli", "Şanlıurfa", "Uşak", "Van", "Yozgat", "Zonguldak", "Aksaray", "Bayburt", "Karaman", "Kırıkkale", "Batman", "Şırnak", "Bartın", "Ardahan", "Iğdır", "Yalova", "Karabük", "Kilis", "Osmaniye", "Düzce"]
-
-# --- 2. YARDIMCI FONKSİYONLAR ---
-def excel_indir(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    return output.getvalue()
-
-# --- 3. GİRİŞ EKRANI ---
+# --- 2. GİRİŞ KONTROLÜ ---
 if 'auth' not in st.session_state: st.session_state['auth'] = False
 
 if not st.session_state['auth']:
@@ -44,7 +30,6 @@ if not st.session_state['auth']:
             st.rerun()
         else: st.error("Hatalı giriş!")
 
-# --- 4. ANA UYGULAMA ---
 else:
     user = st.session_state['user_info']
     
@@ -54,61 +39,63 @@ else:
         st.caption(f"Yetki: {user['yetki']}")
         st.divider()
         
-        menu_items = ["Ana Sayfa", "İş Ataması", "Atanan İşler", "Giriş Onayları", "TT Onayı Bekleyenler", "Tamamlanan İşler", "Hak Ediş", "Zimmet & Envanter", "Kullanıcı Yönetimi", "Profilim", "Çıkış"]
         if "Saha" in user['yetki']:
-            menu_items = ["Ana Sayfa", "Üzerime Atanan İşler", "Tamamladığım İşler", "Profilim", "Çıkış"]
-        
-        choice = st.radio("Menü", menu_items)
+            menu = st.radio("Menü", ["Ana Sayfa", "Üzerime Atanan İşler", "Tamamladığım İşler", "Profilim", "Çıkış"])
+        else:
+            menu = st.radio("Menü", ["Ana Sayfa", "İş Ataması", "Atanan İşler", "Giriş Onayları", "TT Onayı Bekleyenler", "Kullanıcı Yönetimi", "Çıkış"])
 
-    # --- EKRANLAR ---
-    if choice == "Ana Sayfa":
-        st.title("Hoş Geldiniz")
-        st.write(f"Sayın {user['ad_soyad']}, iyi çalışmalar dileriz.")
+    # --- 3. EKRANLAR ---
+    
+    # SAHA PERSONELİ ÖZEL EKRANI: ÜZERİME ATANAN İŞLER
+    if menu == "Üzerime Atanan İşler":
+        st.header("🛠️ Üzerime Atanan İşler")
         
-    elif choice == "İş Ataması":
+        # Sadece giriş yapan personelin ismine ait olan ve henüz tamamlanmamış işleri filtrele
+        df = st.session_state['is_verisi']
+        personel_isleri = df[(df['Personel'] == user['ad_soyad']) & (df['Durum'] == "Atandı")]
+        
+        if personel_isleri.empty:
+            st.info("Üzerinize atanan aktif bir görev bulunmamaktadır.")
+        else:
+            st.table(personel_isleri[["İş ID", "İş Başlığı", "Şehir", "Tarih"]])
+            
+            with st.form("is_bitirme_formu"):
+                is_id = st.selectbox("İşlem Yapılacak İş ID", personel_isleri["İş ID"])
+                detay = st.text_area("İş Detayı / Notlar (Zorunlu)")
+                durum_secimi = st.selectbox("İşlem Tipi", ["Kabul Alındı", "Giriş Maili Gerekli"])
+                yuklenenler = st.file_uploader("Fotoğraflar (Maks 65)", accept_multiple_files=True)
+                
+                if st.form_submit_button("İşi Gönder"):
+                    if not detay:
+                        st.error("Lütfen iş detayını doldurunuz!")
+                    else:
+                        # Veritabanında güncelleme yap
+                        idx = st.session_state['is_verisi'].index[st.session_state['is_verisi']['İş ID'] == is_id].tolist()[0]
+                        yeni_durum = "Tamamlandı" if durum_secimi == "Kabul Alındı" else "Giriş Maili Bekler"
+                        
+                        st.session_state['is_verisi'].at[idx, 'Durum'] = yeni_durum
+                        st.session_state['is_verisi'].at[idx, 'Notlar'] = detay
+                        st.success(f"İş durumu '{yeni_durum}' olarak güncellendi.")
+                        st.rerun()
+
+    elif menu == "Tamamladığım İşler":
+        st.header("✅ Tamamladığım İşler")
+        tamamlananlar = st.session_state['is_verisi'][(st.session_state['is_verisi']['Personel'] == user['ad_soyad']) & (st.session_state['is_verisi']['Durum'].isin(["Tamamlandı", "Giriş Maili Bekler"]))]
+        st.dataframe(tamamlananlar)
+
+    # DİĞER EKRANLAR (Admin/Müdür İçin)
+    elif menu == "İş Ataması":
         st.header("📌 Yeni İş Ataması")
-        with st.form("is_atama"):
+        with st.form("atama"):
             baslik = st.text_input("İş Başlığı")
-            saha_elemanlari = [u["ad_soyad"] for u in st.session_state['users'].values() if "Saha" in u["yetki"]]
-            personel = st.selectbox("Personel", saha_elemanlari)
-            sehir = st.selectbox("Şehir", sehirler)
+            # Sadece saha personellerini listele
+            saha_listesi = [u["ad_soyad"] for u in st.session_state['users'].values() if "Saha" in u["yetki"]]
+            secilen_personel = st.selectbox("Personel", saha_listesi)
             if st.form_submit_button("Ata"):
-                yeni = {"İş ID": len(st.session_state['is_verisi'])+1, "Tarih": str(datetime.now().date()), "İş Başlığı": baslik, "Personel": personel, "Şehir": sehir, "Durum": "Atandı", "Notlar": ""}
+                yeni = {"İş ID": len(st.session_state['is_verisi'])+1, "Tarih": str(datetime.now().date()), "İş Başlığı": baslik, "Personel": secilen_personel, "Şehir": "Belirtilmedi", "Durum": "Atandı", "Notlar": ""}
                 st.session_state['is_verisi'] = pd.concat([st.session_state['is_verisi'], pd.DataFrame([yeni])], ignore_index=True)
-                st.success("İş atandı!")
+                st.success(f"İş {secilen_personel} üzerine atandı!")
 
-    elif choice == "Giriş Onayları":
-        st.header("📩 Giriş Maili Bekleyenler")
-        onay_bekleyenler = st.session_state['is_verisi'][st.session_state['is_verisi']['Durum'] == "Giriş Maili Bekler"]
-        st.dataframe(onay_bekleyenler)
-        if not onay_bekleyenler.empty:
-            if st.button("Seçili İşi 'Kabul Yapılabilir' Olarak Güncelle"):
-                st.info("Bu özellik bir sonraki adımda ID seçimi ile detaylandırılacaktır.")
-
-    elif choice == "TT Onayı Bekleyenler":
-        st.header("🏢 Türk Telekom Onay Ekranı")
-        tt_bekleyen = st.session_state['is_verisi'][st.session_state['is_verisi']['Durum'] == "TT Onayı Bekliyor"]
-        st.dataframe(tt_bekleyen)
-        if not tt_bekleyen.empty:
-            st.download_button("Raporu Excel Olarak İndir", data=excel_indir(tt_bekleyen), file_name="tt_onay.xlsx")
-
-    elif choice == "Kullanıcı Yönetimi":
-        st.header("👥 Kullanıcı Yönetimi")
-        # Yeni Kullanıcı Ekleme
-        with st.expander("➕ Yeni Kullanıcı Ekle"):
-            y_kadi = st.text_input("Kullanıcı Adı (Giriş için)")
-            y_ad = st.text_input("İsim Soyisim")
-            y_sifre = st.text_input("Şifre")
-            y_yetki = st.selectbox("Yetki", ["Yönetici", "Müdür", "Saha Personeli"])
-            if st.button("Kullanıcıyı Kaydet"):
-                st.session_state['users'][y_kadi] = {"sifre": y_sifre, "ad_soyad": y_ad, "yetki": y_yetki}
-                st.success("Kullanıcı eklendi!")
-        
-        # Mevcut Kullanıcıları Listele
-        st.subheader("Aktif Kullanıcılar")
-        user_df = pd.DataFrame.from_dict(st.session_state['users'], orient='index')
-        st.table(user_df[["ad_soyad", "yetki"]])
-
-    elif choice == "Çıkış":
+    elif menu == "Çıkış":
         st.session_state['auth'] = False
         st.rerun()
