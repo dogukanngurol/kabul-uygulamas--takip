@@ -4,40 +4,34 @@ import sqlite3
 from datetime import datetime
 import hashlib
 import io
-import zipfile
 
-# --- 1. SİSTEM VE DB AYARLARI ---
-st.set_page_config(page_title="Anatolia Bilişim | Operasyon", layout="wide")
+# --- ⚙️ 1. KONFİGÜRASYON VE VERİTABANI ---
+st.set_page_config(page_title="Anatolia Bilişim | Operasyon Merkezi", layout="wide")
 
 def init_db():
-    conn = sqlite3.connect('anatoli_v72.db')
+    conn = sqlite3.connect('anatolia_v75.db')
     c = conn.cursor()
-    # Kullanıcılar
+    # Tablo yapıları (Madde 1, 4, 10, 11)
     c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT, password TEXT, role TEXT)''')
-    # İşler (Metadata odaklı: report, status_history, photo_refs JSON formatında tutulabilir)
-    c.execute('''CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY, title TEXT, assigned_to TEXT, city TEXT, status TEXT, 
-        note TEXT, photo_refs TEXT, created_at TEXT, updated_at TEXT, reject_reason TEXT)''')
-    # Zimmet
+    c.execute('''CREATE TABLE IF NOT EXISTS tasks (id INTEGER PRIMARY KEY, title TEXT, assigned_to TEXT, city TEXT, status TEXT, note TEXT, created_at TEXT, updated_at TEXT)''')
     c.execute('''CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, item_name TEXT, owner_email TEXT)''')
     
-    # 1. Madde: Kullanıcı Oluşturma
-    hashed_pw = hashlib.sha256("1234".encode()).hexdigest()
-    users_list = [
-        (1, 'Admin', 'admin@sirket.com', '5550001122', hashed_pw, 'Admin'),
-        (2, 'Doğukan', 'dogukan@deneme.com', '5551112233', hashed_pw, 'Saha Personeli'),
-        (3, 'Doğuşcan', 'doguscan@deneme.com', '5552223344', hashed_pw, 'Saha Personeli'),
-        (4, 'Cüneyt', 'cuneyt@deneme.com', '5553334455', hashed_pw, 'Saha Personeli'),
-        (5, 'Filiz', 'filiz@deneme.com', '5554445566', hashed_pw, 'Müdür')
+    # Demo Kullanıcılar (Madde 1)
+    pw = hashlib.sha256("1234".encode()).hexdigest()
+    demo_users = [
+        (1, 'Doğukan Gürol', 'admin@anatolia.com', '05001112233', pw, 'Admin'),
+        (2, 'Yönetici Panel', 'yonetici@anatolia.com', '05001112234', pw, 'Yönetici'),
+        (3, 'Müdür Panel', 'mudur@anatolia.com', '05001112235', pw, 'Müdür'),
+        (4, 'Saha Ekibi', 'saha@anatolia.com', '05001112236', pw, 'Saha Personeli')
     ]
-    c.executemany("INSERT OR IGNORE INTO users VALUES (?,?,?,?,?,?)", users_list)
+    c.executemany("INSERT OR IGNORE INTO users VALUES (?,?,?,?,?,?)", demo_users)
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- 🛠️ YARDIMCI ARAÇLAR (Madde 6 & 10) ---
-def get_greeting():
+# --- 🛠️ 2. YARDIMCI ARAÇLAR ---
+def get_greeting(): # Madde 3 & 14
     hr = datetime.now().hour
     u = st.session_state.user['name']
     if 8 <= hr < 12: return f"☀️ Günaydın {u}, İyi Çalışmalar"
@@ -45,151 +39,118 @@ def get_greeting():
     elif 18 <= hr < 24: return f"🌆 İyi Akşamlar {u}, İyi Çalışmalar"
     else: return f"🌙 İyi Geceler {u}, İyi Çalışmalar"
 
-def create_zip(files): # Madde 6: RAR/ZIP Çıktısı
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, 'w') as z:
-        for f in files:
-            z.writestr(f.name, f.getvalue())
-    return buf.getvalue()
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+    return output.getvalue()
 
-# --- 🔐 GİRİŞ SİSTEMİ ---
+# --- 🔐 3. GİRİŞ KONTROLÜ ---
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
 if not st.session_state.logged_in:
-    st.title("🔐 Anatolia Bilişim Sistem Girişi")
-    with st.form("login"):
-        e = st.text_input("📧 Mail")
-        p = st.text_input("🔑 Şifre", type="password")
-        if st.form_submit_button("Giriş Yap"):
-            hpw = hashlib.sha256(p.encode()).hexdigest()
-            conn = sqlite3.connect('anatoli_v72.db')
-            u = conn.execute("SELECT * FROM users WHERE email=? AND password=?", (e, hpw)).fetchone()
+    st.title("🏢 Anatolia Bilişim Sistem Girişi")
+    with st.container(border=True):
+        email_input = st.text_input("📧 E-Posta Adresi (admin@anatolia.com)")
+        pass_input = st.text_input("🔑 Şifre (1234)", type="password")
+        if st.button("Sisteme Giriş Yap", use_container_width=True, type="primary"):
+            hpw = hashlib.sha256(pass_input.encode()).hexdigest()
+            conn = sqlite3.connect('anatolia_v75.db')
+            u = conn.execute("SELECT * FROM users WHERE email=? AND password=?", (email_input, hpw)).fetchone()
             conn.close()
             if u:
-                st.session_state.update({'logged_in':True, 'user':{'id':u[0],'name':u[1],'email':u[2],'phone':u[3],'role':u[5]}, 'page':"🏠 Ana Sayfa"})
+                st.session_state.update({'logged_in': True, 'user': {'id':u[0],'name':u[1],'email':u[2],'phone':u[3],'role':u[5]}, 'page': "🏠 Ana Sayfa"})
                 st.rerun()
-            else: st.error("❌ Hatalı Giriş")
+            else: st.error("❌ E-posta veya şifre hatalı!")
 
 else:
-    # --- 📋 SOL MENÜ ---
+    # --- 📋 4. SOL MENÜ (Madde 2) ---
     u_role = st.session_state.user['role']
     u_mail = st.session_state.user['email']
     
     with st.sidebar:
-        st.markdown(f"## 🏢 Anatolia Bilişim")
-        st.info(f"👤 **{st.session_state.user['name']}**\n🛡️ {u_role}")
+        st.markdown(f"## Anatolia Bilişim")
+        st.caption(f"👤 {st.session_state.user['name']} | 🛡️ {u_role}")
+        st.divider()
         
-        menu = ["🏠 Ana Sayfa"]
-        if u_role in ["Admin", "Müdür"]:
-            menu += ["➕ İş Ataması", "📋 Atanan İşler", "📨 Giriş Onayları", "📡 TT Onayı Bekleyenler", "✅ Tamamlanan İşler", "💰 Hak Ediş", "📦 Zimmet & Envanter", "👥 Kullanıcı Yönetimi"]
-        else: # Saha Personeli (Madde 12)
-            menu += ["⏳ Üzerime Atanan İşler", "📜 Çalışmalarım", "🎒 Zimmetim"]
-        
-        menu += ["👤 Profilim", "🚪 Çıkış"]
+        # Rol Bazlı Menü Yapılandırması
+        if u_role == "Saha Personeli":
+            menu = ["🏠 Ana Sayfa", "⏳ Üzerime Atanan İşler", "📜 Tamamladığım İşler", "🎒 Zimmetim", "👤 Profilim", "🚪 Çıkış"]
+        else:
+            menu = ["🏠 Ana Sayfa", "➕ İş Ataması", "📋 Atanan İşler", "📨 Giriş Onayları", "📡 TT Onayı Bekleyenler", "✅ Tamamlanan İşler", "💰 Hak Ediş", "📦 Zimmet & Envanter", "👥 Kullanıcı Yönetimi", "👤 Profilim", "🚪 Çıkış"]
         
         for item in menu:
-            if st.sidebar.button(item, use_container_width=True, type="primary" if st.session_state.page == item else "secondary"):
-                if item == "🚪 Çıkış": st.session_state.logged_in = False
-                else: st.session_state.page = item
+            btn_type = "primary" if st.session_state.page == item else "secondary"
+            if st.sidebar.button(item, use_container_width=True, type=btn_type):
+                if item == "🚪 Çıkış": 
+                    st.session_state.logged_in = False
+                    st.rerun()
+                st.session_state.page = item
                 st.rerun()
 
-    conn = sqlite3.connect('anatoli_v72.db')
-    page = st.session_state.page
+    # --- 🖼️ 5. SAYFA İÇERİKLERİ ---
+    conn = sqlite3.connect('anatolia_v75.db')
+    cp = st.session_state.page
 
-    # --- 🏠 ANA SAYFA (Madde 10 & 12) ---
-    if page == "🏠 Ana Sayfa":
+    if cp == "🏠 Ana Sayfa":
         st.header(get_greeting())
-        if u_role == "Admin":
-            c1, c2, c3 = st.columns(3)
-            c1.metric("✅ Tamamlanan İşler", "24")
-            c2.metric("⏳ Bekleyen Atamalar", "8")
-            c3.metric("📅 Haftalık Toplam", "142") # Sayaç simülasyonu
-        elif u_role == "Saha Personeli":
-            st.info("💡 Atanan işlerinizi 'Üzerime Atanan İşler' sekmesinden yönetebilirsiniz.")
+        if u_role != "Saha Personeli":
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("✅ Günlük Tamamlanan", "0", delta="Günlük")
+            c2.metric("⏳ Bekleyen Atamalar", "0")
+            c3.metric("📅 Haftalık Toplam", "0")
+            c4.metric("📊 Aylık Toplam", "0")
+        else:
+            st.info("💡 Atanan işlerinizi yönetmek için yan menüden 'Üzerime Atanan İşler'e gidin.")
 
-    # --- ➕ İŞ ATAMASI (Madde 1 & 4) ---
-    elif page == "➕ İş Ataması":
+    elif cp == "➕ İş Ataması":
         st.header("➕ Yeni İş Ataması")
-        # Müdür hariç saha personellerini listele (Madde 1)
         pers = pd.read_sql("SELECT email FROM users WHERE role='Saha Personeli'", conn)
-        with st.form("task_assign"):
-            title = st.text_input("İş Başlığı")
-            worker = st.selectbox("Çalışan Seçin", pers['email'])
-            city = st.selectbox("Şehir", ["İstanbul", "Adana", "Ankara", "İzmir", "Diğer"]) # Madde 5
-            if st.form_submit_button("İşi Ata"):
-                conn.execute("INSERT INTO tasks (title, assigned_to, city, status, created_at) VALUES (?,?,?,?,?)", 
-                             (title, worker, city, 'Atandı', datetime.now().strftime("%Y-%m-%d")))
+        with st.form("task_form"):
+            t = st.text_input("📌 İş Başlığı")
+            w = st.selectbox("👷 Personel", pers['email'] if not pers.empty else ["Personel Yok"])
+            c = st.selectbox("📍 Şehir", ["Adana", "Ankara", "Antalya", "Bursa", "İstanbul", "İzmir"]) # 81 il eklenebilir
+            if st.form_submit_button("🚀 İşi Ata"):
+                conn.execute("INSERT INTO tasks (title, assigned_to, city, status, created_at) VALUES (?,?,?,?,?)", (t, w, c, 'Atandı', datetime.now().strftime("%Y-%m-%d")))
                 conn.commit()
-                st.success("İş Atandı!")
+                st.success("✅ İş başarıyla atandı!")
 
-    # --- ⏳ SAHA PERSONELİ EKRANI (Madde 2 & 3) ---
-    elif page == "⏳ Üzerime Atanan İşler":
-        st.header("⏳ Aktif Görevlerim")
-        my_tasks = pd.read_sql(f"SELECT * FROM tasks WHERE assigned_to='{u_mail}' AND status IN ('Atandı', 'Taslak', 'Reddedildi')", conn)
-        
-        for i, row in my_tasks.iterrows():
-            with st.expander(f"📍 {row['title']} ({row['status']})"):
-                # Madde 3: Durum Seçim Kutusu
-                status_choice = st.selectbox("Durum Seçin", ["İŞ TAMAMLANDI", "GİRİŞ YAPILAMADI", "TEPKİLİ", "MAL SAHİBİ GELMİYOR", "Giriş Mail Onayı Bekler"], key=f"st_{row['id']}")
-                note = st.text_area("Rapor Yazma Alanı", value=row['note'] if row['note'] else "", key=f"nt_{row['id']}")
-                files = st.file_uploader("Dosya/Fotoğraf Ekle", accept_multiple_files=True, key=f"fl_{row['id']}")
-                
-                col1, col2 = st.columns(2)
-                # Madde 2: Taslak Kaydetme
-                if col1.button("💾 Kaydet (Taslak)", key=f"save_{row['id']}"):
-                    conn.execute("UPDATE tasks SET note=?, status='Taslak' WHERE id=?", (note, row['id']))
-                    conn.commit()
-                    st.toast("Taslak olarak saklandı.")
-                
-                # Madde 11: Giriş Mail Onayı Akışı
-                if col2.button("🚀 İşi Gönder", key=f"send_{row['id']}", type="primary"):
-                    final_status = "Giriş Mail Onayı Bekler" if status_choice == "Giriş Mail Onayı Bekler" else "Tamamlandı"
-                    conn.execute("UPDATE tasks SET status=?, note=?, updated_at=? WHERE id=?", 
-                                 (status_choice, note, datetime.now().strftime("%Y-%m-%d"), row['id']))
-                    conn.commit()
-                    st.success("İş gönderildi!")
-                    st.rerun()
+    elif cp == "⏳ Üzerime Atanan İşler":
+        st.header("⏳ Üzerime Atanan Görevler")
+        tasks = pd.read_sql(f"SELECT * FROM tasks WHERE assigned_to='{u_mail}' AND status IN ('Atandı', 'Taslak')", conn)
+        if tasks.empty:
+            st.warning("Atanan Bir Görev Bulunmamaktadır")
+        else:
+            for i, r in tasks.iterrows():
+                with st.expander(f"📍 {r['title']} - {r['city']}"):
+                    note = st.text_area("📝 İş Detayı (ZORUNLU)", value=r['note'] if r['note'] else "", key=f"n_{r['id']}")
+                    st.file_uploader("📸 Fotoğraflar (Maks 65)", accept_multiple_files=True, key=f"f_{r['id']}")
+                    c1, c2, c3 = st.columns(3)
+                    if c1.button("💾 Kaydet (Taslak)", key=f"s_{r['id']}"):
+                        conn.execute("UPDATE tasks SET note=?, status='Taslak' WHERE id=?", (note, r['id']))
+                        conn.commit()
+                        st.toast("Taslak Kaydedildi!")
+                    if c2.button("📨 Giriş Maili Gerekli", key=f"m_{r['id']}"):
+                        conn.execute("UPDATE tasks SET status='Giriş Maili Bekler' WHERE id=?", (r['id'],))
+                        conn.commit()
+                        st.rerun()
+                    if c3.button("🚀 İşi Gönder", type="primary", disabled=not note, key=f"g_{r['id']}"):
+                        conn.execute("UPDATE tasks SET status='Kabul Alındı', note=?, updated_at=? WHERE id=?", (note, datetime.now().strftime("%Y-%m-%d"), r['id']))
+                        conn.commit()
+                        st.success("İş başarıyla gönderildi!")
+                        st.rerun()
 
-    # --- ✅ TAMAMLANAN İŞLER VE FİLTRELEME (Madde 4, 5, 8) ---
-    elif page == "✅ Tamamlanan İşler":
-        st.header("✅ Tamamlanan İş Listesi")
-        
-        # Filtreleme Alanı (Madde 4 & 5)
-        c1, c2, c3 = st.columns(3)
-        with c1: f_city = st.selectbox("Şehir Filtresi", ["Hepsi", "İstanbul", "Adana", "Ankara"])
-        with c2: f_worker = st.selectbox("Çalışan Filtresi", ["Hepsi"] + pd.read_sql("SELECT email FROM users WHERE role='Saha Personeli'", conn)['email'].tolist())
-        with c3: f_type = st.radio("İş Grubu", ["Hepsi", "Tamamlanan İşler", "Tamamlanamayan İşler"])
-
-        query = "SELECT * FROM tasks WHERE status NOT IN ('Atandı', 'Taslak')"
-        df = pd.read_sql(query, conn)
-        
-        # Mantıksal Filtreleme (Madde 4)
-        if f_type == "Tamamlanan İşler": df = df[df['status'] == 'İŞ TAMAMLANDI']
-        elif f_type == "Tamamlanamayan İşler": df = df[df['status'].isin(['GİRİŞ YAPILAMADI', 'TEPKİLİ', 'MAL SAHİBİ GELMİYOR'])]
-        
-        if f_city != "Hepsi": df = df[df['city'] == f_city]
-        
-        st.dataframe(df, use_container_width=True)
-        
-        # Madde 6: Excel Çıktısı
-        if not df.empty:
-            buf = io.BytesIO()
-            df.to_excel(buf, index=False)
-            st.download_button("📥 Seçili Verileri Excel Olarak İndir", buf.getvalue(), "rapor.xlsx")
-
-    # --- 👤 PROFİLİM (Madde 1) ---
-    elif page == "👤 Profilim":
-        st.header("👤 Profil Ayarları")
-        with st.form("profile"):
-            # Madde 1: Müdür harici güncelleme kuralları
-            can_edit = u_role != "Müdür"
-            new_mail = st.text_input("E-posta", value=u_mail, disabled=not can_edit)
-            new_phone = st.text_input("Telefon", value=st.session_state.user['phone'], disabled=not can_edit)
-            new_pw = st.text_input("Yeni Şifre (Şifre Değiştirme)", type="password")
-            
-            if st.form_submit_button("Güncellemeleri Kaydet"):
-                # DB Update kodları...
-                st.success("Profil Güncellendi!")
+    elif cp == "👤 Profilim":
+        st.header("👤 Profil Bilgileri")
+        is_p_admin = u_role in ["Admin", "Yönetici"]
+        with st.form("profile_form"):
+            st.text_input("Kullanıcı Adı", value=st.session_state.user['name'], disabled=not is_p_admin)
+            st.text_input("Şirket Maili", value=st.session_state.user['email'], disabled=not is_p_admin)
+            new_phone = st.text_input("Telefon Numarası", value=st.session_state.user['phone'])
+            if st.form_submit_button("💾 Güncelle"):
+                conn.execute("UPDATE users SET phone=? WHERE id=?", (new_phone, st.session_state.user['id']))
+                conn.commit()
+                st.success("Telefon numaranız güncellendi!")
 
     conn.close()
