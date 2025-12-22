@@ -3,189 +3,123 @@ import sqlite3
 import pandas as pd
 from datetime import datetime
 import hashlib
-import io
 
-# --- ⚙️ SİSTEM KONFİGÜRASYONU ---
-st.set_page_config(page_title="Anatolia Bilişim", layout="wide", initial_sidebar_state="expanded")
-
-# --- 🔐 1. SESSION STATE BAŞLATMA (Hata Önleyici - En Üstte Olmalı) ---
-if 'logged_in' not in st.session_state:
-    st.session_state.update({'logged_in': False, 'u_email': None, 'u_role': None, 'u_name': None, 'page': "🏠 Ana Sayfa"})
-
-# --- 🗄️ 2. VERİTABANI MOTORU VE TABLO OLUŞTURMA ---
-def get_db_connection():
-    return sqlite3.connect('anatolia_v68.db', check_same_thread=False)
-
-def init_db():
-    conn = get_db_connection()
+# --- ⚙️ 5. VERİ MODELİ (MOCK DB) ---
+def init_mock_db():
+    conn = sqlite3.connect('anatolia_demo.db')
     c = conn.cursor()
-    # Maddeler 1, 11: Kullanıcılar
-    c.execute('''CREATE TABLE IF NOT EXISTS users (email TEXT PRIMARY KEY, password TEXT, role TEXT, name TEXT, phone TEXT)''')
-    # Maddeler 4, 5, 6, 7, 8, 9: İş Takibi
-    c.execute('''CREATE TABLE IF NOT EXISTS tasks (
-        id INTEGER PRIMARY KEY AUTOINCREMENT, assigned_to TEXT, title TEXT, city TEXT, 
-        status TEXT, report TEXT, created_at TEXT, updated_at TEXT)''')
-    # Madde 10: Zimmet
-    c.execute('''CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY AUTOINCREMENT, item_name TEXT, assigned_to TEXT)''')
+    # Users & Roles (Madde 2)
+    c.execute('''CREATE TABLE IF NOT EXISTS users (username TEXT, role TEXT, password TEXT)''')
+    # Jobs & Status (Madde 3, 4, 5)
+    c.execute('''CREATE TABLE IF NOT EXISTS jobs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, 
+        title TEXT, 
+        assigned_to TEXT, 
+        status TEXT, 
+        photos_count INTEGER DEFAULT 0,
+        payment_status BOOLEAN DEFAULT 0)''')
+    # Logs (Madde 7)
+    c.execute('''CREATE TABLE IF NOT EXISTS logs (action TEXT, timestamp TEXT)''')
     
-    # Varsayılan Admin (Şifre: 1234)
+    # Demo Verileri Ekleme
     admin_pw = hashlib.sha256('1234'.encode()).hexdigest()
-    c.execute("INSERT OR IGNORE INTO users VALUES (?,?,?,?,?)", ('admin@anatolia.com', admin_pw, 'Admin', 'Doğukan Gürol', '05001112233'))
+    c.execute("INSERT OR IGNORE INTO users VALUES ('Mudur_Ali', 'Müdür', ?)", (admin_pw,))
+    c.execute("INSERT OR IGNORE INTO users VALUES ('Saha_Can', 'Saha Personeli', ?)", (admin_pw,))
+    c.execute("INSERT OR IGNORE INTO users VALUES ('Yonetici_Ayşe', 'Yönetici', ?)", (admin_pw,))
     conn.commit()
     conn.close()
 
-init_db()
+init_mock_db()
 
-# --- 🛠️ 3. YARDIMCI ARAÇLAR ---
-def get_greeting():
-    hr = datetime.now().hour
-    if 0 <= hr < 8: return "🌙 İyi Geceler"
-    elif 8 <= hr < 12: return "☀️ Günaydın"
-    elif 12 <= hr < 18: return "🌤️ İyi Günler"
-    else: return "🌆 İyi Akşamlar"
+# --- 🚀 4. İŞ DURUMLARI (ENUMS) ---
+class Status:
+    ATANDI = "🎯 ATANDI"
+    SAHADA = "🏗️ SAHADA_YAPILIYOR"
+    TAMAMLANDI = "✅ TAMAMLANDI"
+    MUDUR_ONAYI = "👨‍💼 MUDUR_ONAYINDA"
+    YONETICI_ONAYI = "👩‍💻 YONETICI_ONAYINDA"
+    ODEME_BEKLIYOR = "💰 ODEME_BEKLENIYOR"
+    ONAYLANDI = "🌟 ONAYLANDI"
 
-def export_excel(df, filename):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    return st.download_button(label="📥 Excel Raporu İndir", data=output.getvalue(), file_name=f"{filename}.xlsx", mime="application/vnd.ms-excel")
+# --- 📱 UI & LOGIC ---
+st.set_page_config(page_title="Anatolia Bilişim Demo", layout="wide")
 
-# --- 🚪 4. GİRİŞ EKRANI (Madde 13 Kontrolü Dahil) ---
-if not st.session_state.logged_in:
-    st.markdown("<h1 style='text-align: center;'>🔐 Anatolia Bilişim Giriş</h1>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        with st.form("login_gate"):
-            e = st.text_input("📧 Şirket Mail Adresi")
-            p = st.text_input("🔑 Şifre", type='password')
-            if st.form_submit_button("🚀 Sisteme Giriş Yap", use_container_width=True):
-                hashed = hashlib.sha256(p.encode()).hexdigest()
-                conn = get_db_connection()
-                user = conn.execute("SELECT * FROM users WHERE email=? AND password=?", (e, hashed)).fetchone()
-                conn.close()
-                if user:
-                    st.session_state.update({'logged_in': True, 'u_email': user[0], 'u_role': user[2], 'u_name': user[3]})
-                    st.rerun()
-                else: st.error("❌ Hatalı giriş bilgileri!")
+if 'user' not in st.session_state:
+    st.session_state.user = None
 
-# --- 🏠 5. ANA UYGULAMA PANELİ ---
+# --- 🔑 GİRİŞ SİMÜLASYONU ---
+if not st.session_state.user:
+    st.title("🏢 Anatolia Bilişim Prototip Girişi")
+    u = st.text_input("Kullanıcı Adı (Demo: Mudur_Ali, Saha_Can, Yonetici_Ayşe)")
+    p = st.text_input("Şifre (1234)", type="password")
+    if st.button("Giriş Yap"):
+        st.session_state.user = {"name": u, "role": "Müdür" if "Mudur" in u else ("Yönetici" if "Yonetici" in u else "Saha Personeli")}
+        st.rerun()
+
 else:
-    # --- 📋 SOL MENÜ (Madde 2) ---
-    with st.sidebar:
-        st.title("🏢 Anatolia Bilişim")
-        st.info(f"👤 **{st.session_state.u_name}**\n\n🛡️ Yetki: {st.session_state.u_role}")
-        st.divider()
+    # --- 📋 SOL MENÜ ---
+    st.sidebar.title(f"👤 {st.session_state.user['name']}")
+    st.sidebar.write(f"🛡️ Rol: {st.session_state.user['role']}")
+    
+    menu = ["İş Akışı", "Raporlama (Demo)", "Sistem Logları", "Çıkış"]
+    choice = st.sidebar.radio("Menü", menu)
 
-        role = st.session_state.u_role
-        # Dinamik Menü Oluşturma
-        menu = ["🏠 Ana Sayfa"]
-        if role != "Saha Personeli":
-            menu += ["➕ İş Ataması", "📋 Atanan İşler", "📨 Giriş Onayları", "📡 TT Onayı Bekleyenler", "✅ Tamamlanan İşler", "💰 Hak Ediş", "📦 Zimmet & Envanter"]
-            if role in ["Admin", "Yönetici"]: menu.append("👥 Kullanıcı Yönetimi")
-        else:
-            menu += ["⏳ Üzerime Atanan İşler", "📜 Tamamladığım İşler", "🎒 Zimmetim"]
+    conn = sqlite3.connect('anatolia_demo.db')
+
+    # --- 3. DEMO İŞ AKIŞI (WORKFLOW) ---
+    if choice == "İş Akışı":
+        st.header("🔄 Rol Bazlı İş Akışı Simülasyonu")
         
-        menu += ["👤 Profilim", "🔴 ÇIKIŞ"]
+        # MÜDÜR: İŞ ATAMA (Madde 3.1)
+        if st.session_state.user['role'] == "Müdür":
+            with st.expander("➕ Yeni İş Ata (Müdür Yetkisi)"):
+                t = st.text_input("İş Başlığı")
+                if st.button("Ata"):
+                    conn.execute("INSERT INTO jobs (title, assigned_to, status) VALUES (?, ?, ?)", (t, 'Saha_Can', Status.ATANDI))
+                    conn.execute("INSERT INTO logs VALUES (?, ?)", (f"İş atandı: {t}", datetime.now().isoformat()))
+                    conn.commit()
+                    st.success("İş Saha Personeline atandı!")
 
-        for item in menu:
-            btn_type = "primary" if st.session_state.page == item else "secondary"
-            if st.button(item, use_container_width=True, type=btn_type):
-                if item == "🔴 ÇIKIŞ":
-                    st.session_state.logged_in = False
-                    st.rerun()
-                st.session_state.page = item
-                st.rerun()
+        # SAHA PERSONELİ: FOTOĞRAF VE TAMAMLAMA (Madde 3.2, 3.3, 6)
+        if st.session_state.user['role'] == "Saha Personeli":
+            st.subheader("📥 Üzerimdeki İşler")
+            jobs = pd.read_sql("SELECT * FROM jobs WHERE assigned_to='Saha_Can' AND status='🎯 ATANDI'", conn)
+            for _, row in jobs.iterrows():
+                st.info(f"İş: {row['title']}")
+                # Madde 6: Fotoğraf Yönetimi (Mock)
+                photo_count = st.slider("Eklenecek Mock Fotoğraf Sayısı (Maks 65)", 0, 65, 5)
+                if st.button("İşi Tamamla & Onaya Gönder"):
+                    conn.execute("UPDATE jobs SET status=?, photos_count=? WHERE id=?", (Status.TAMAMLANDI, photo_count, row['id']))
+                    conn.commit()
+                    st.success(f"{photo_count} dummy fotoğraf eklendi. Statü: TAMAMLANDI")
 
-    # --- 🖼️ 6. SAYFA İÇERİKLERİ ---
-    conn = get_db_connection()
-    cp = st.session_state.page
-
-    # --- Madde 3 & 14: ANA SAYFA ---
-    if cp == "🏠 Ana Sayfa":
-        st.subheader(f"{get_greeting()} {st.session_state.u_name} İyi Çalışmalar! 🚀")
-        
-        if role != "Saha Personeli":
-            st.markdown("### 📊 Operasyonel Durum")
-            c1, c2, c3, c4 = st.columns(4)
-            # Veritabanından sayaçları çek (Örnek mantık)
-            c1.metric("✅ Tamamlanan", "12")
-            c2.metric("⏳ Bekleyen", "5")
-            c3.metric("📅 Haftalık", "84")
-            c4.metric("🗓️ Aylık", "312")
-
-    # --- Madde 4: İŞ ATAMASI ---
-    elif cp == "➕ İş Ataması":
-        st.header("➕ Yeni İş Atama")
-        personel_list = pd.read_sql("SELECT email FROM users WHERE role='Saha Personeli'", conn)
-        with st.form("atama_form"):
-            t = st.text_input("📌 İş Başlığı")
-            p = st.selectbox("👷 Saha Personeli", personel_list['email'].tolist())
-            s = st.selectbox("📍 Şehir", ["İstanbul", "Ankara", "İzmir", "Bursa", "Antalya"]) # 81 il eklenebilir
-            if st.form_submit_button("🚀 İşi Ata"):
-                conn.execute("INSERT INTO tasks (assigned_to, title, city, status, created_at) VALUES (?,?,?,?,?)",
-                             (p, t, s, "Bekliyor", datetime.now().strftime("%Y-%m-%d")))
-                conn.commit()
-                st.success(f"✅ İş {p} personeline başarıyla atandı!")
-
-    # --- Madde 5, 8: TABLO GÖRÜNÜMLERİ VE FİLTRELEME ---
-    elif cp in ["📋 Atanan İşler", "✅ Tamamlanan İşler", "💰 Hak Ediş"]:
-        st.header(f"📋 {cp}")
-        # Madde 37: Boş ekran uyarısı ve filtreleme (Genel fonksiyon yapısı)
-        status_map = {"📋 Atanan İşler": "('Bekliyor')", "✅ Tamamlanan İşler": "('Kabul Alındı')", "💰 Hak Ediş": "('Hak Ediş Alındı', 'Hak Ediş Bekleniyor')"}
-        df = pd.read_sql(f"SELECT * FROM tasks WHERE status IN {status_map[cp]}", conn)
-        
-        if df.empty:
-            st.warning("⚠️ Gösterilecek Bir Görev Bulunmamaktadır.")
-        else:
-            # Madde 31-35: Filtreleme
-            with st.expander("🔍 Filtrele"):
-                f_city = st.selectbox("Şehir", ["Hepsi"] + df['city'].unique().tolist())
-            
-            filtered_df = df if f_city == "Hepsi" else df[df['city'] == f_city]
-            st.dataframe(filtered_df, use_container_width=True)
-            export_excel(filtered_df, cp)
-
-    # --- Madde 11: KULLANICI YÖNETİMİ ---
-    elif cp == "👥 Kullanıcı Yönetimi":
-        st.header("👥 Kullanıcı Yönetimi")
-        with st.expander("➕ Yeni Kullanıcı Ekle"):
-            with st.form("new_user"):
-                n = st.text_input("İsim Soyisim")
-                e = st.text_input("Mail Adresi")
-                p = st.text_input("Geçici Şifre", type="password")
-                r = st.selectbox("Yetki", ["Saha Personeli", "Müdür", "Yönetici"])
-                if st.form_submit_button("Kaydet"):
-                    h = hashlib.sha256(p.encode()).hexdigest()
-                    conn.execute("INSERT INTO users (email, password, role, name) VALUES (?,?,?,?)", (e, h, r, n))
+        # YÖNETİCİ: ÖDEME VE ONAY (Madde 3.5)
+        if st.session_state.user['role'] == "Yönetici":
+            st.subheader("💳 Ödeme ve Son Onay Ekranı")
+            jobs = pd.read_sql(f"SELECT * FROM jobs WHERE status='{Status.TAMAMLANDI}'", conn)
+            for _, row in jobs.iterrows():
+                st.warning(f"Onay Bekleyen: {row['title']} ({row['photos_count']} Fotoğraf)")
+                pay = st.checkbox(f"Ödeme Alındı mı? (ID: {row['id']})")
+                if st.button(f"Süreci Kapat (ID: {row['id']})"):
+                    final_status = Status.ONAYLANDI if pay else Status.ODEME_BEKLIYOR
+                    conn.execute("UPDATE jobs SET status=?, payment_status=? WHERE id=?", (final_status, pay, row['id']))
                     conn.commit()
                     st.rerun()
-        
-        users_df = pd.read_sql("SELECT name, email, role FROM users", conn)
-        st.table(users_df)
-        export_excel(users_df, "Kullanici_Listesi")
 
-    # --- Madde 15: SAHA PERSONELİ ÖZEL (ÜZERİME ATANAN İŞLER) ---
-    elif cp == "⏳ Üzerime Atanan İşler":
-        st.header("⏳ Üzerime Atanan Görevler")
-        my_tasks = pd.read_sql(f"SELECT * FROM tasks WHERE assigned_to='{st.session_state.u_email}' AND status='Bekliyor'", conn)
-        
-        if my_tasks.empty:
-            st.info("🎉 Şu an üzerinizde bekleyen bir iş yok.")
-        else:
-            for _, row in my_tasks.iterrows():
-                with st.expander(f"📍 {row['title']} - {row['city']}"):
-                    report = st.text_area("✍️ Çalışma Notu (Zorunlu)", key=f"rep_{row['id']}")
-                    files = st.file_uploader("📸 Fotoğraflar (Max 65)", accept_multiple_files=True, key=f"file_{row['id']}")
-                    
-                    col_a, col_b = st.columns(2)
-                    if col_a.button("💾 Kaydet", key=f"save_{row['id']}"):
-                        st.toast("Taslak kaydedildi!")
-                    
-                    if col_b.button("🚀 İşi Gönder", type="primary", key=f"send_{row['id']}", disabled=not report):
-                        conn.execute("UPDATE tasks SET status='Kabul Alındı', report=?, updated_at=? WHERE id=?", 
-                                     (report, datetime.now().strftime("%Y-%m-%d"), row['id']))
-                        conn.commit()
-                        st.success("İş başarıyla merkeze gönderildi!")
-                        st.rerun()
+    # --- 9. RAPORLAMA (DEMO) ---
+    elif choice == "Raporlama (Demo)":
+        st.header("📊 Demo Raporlama Paneli")
+        df_all = pd.read_sql("SELECT * FROM jobs", conn)
+        st.table(df_all)
+
+    # --- 7. LOGLAMA ---
+    elif choice == "Sistem Logları":
+        st.header("📜 İşlem Geçmişi (Logs)")
+        logs = pd.read_sql("SELECT * FROM logs ORDER BY timestamp DESC", conn)
+        st.dataframe(logs)
+
+    elif choice == "Çıkış":
+        st.session_state.user = None
+        st.rerun()
 
     conn.close()
