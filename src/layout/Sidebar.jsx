@@ -1,24 +1,22 @@
-import { useAuth } from '../store/AuthContext';
-import { ROLES, PERMISSIONS } from '../utils/roleUtils';
+import streamlit as st
+from src.utils.roleUtils import PAGE_PERMISSIONS
 
-const Sidebar = ({ setCurrentPage }) => {
-  const { user } = useAuth();
-
-  const menuItems = [
-    { id: 'dashboard', label: 'Dashboard', roles: Object.values(ROLES) },
-    { id: 'users', label: 'Kullanıcılar', roles: PERMISSIONS.MANAGE_USERS },
-    { id: 'reports', label: 'Raporlar', roles: PERMISSIONS.VIEW_REPORTS },
-  ];
-
-  return (
-    <aside className="sidebar">
-      {menuItems.filter(item => item.roles.includes(user.role)).map(item => (
-        <button key={item.id} onClick={() => setCurrentPage(item.id)}>
-          {item.label}
-        </button>
-      ))}
-    </aside>
-  );
-};
-
-export default Sidebar;
+def render_sidebar():
+    st.sidebar.title("İş Takip Sistemi")
+    user_role = st.session_state.user["role"]
+    
+    st.sidebar.write(f"Hoşgeldin, **{user_role}**")
+    
+    # Role göre menü filtreleme
+    available_pages = [
+        page for page, roles in PAGE_PERMISSIONS.items() 
+        if user_role in roles
+    ]
+    
+    selection = st.sidebar.radio("Menü", available_pages)
+    
+    if st.sidebar.button("Güvenli Çıkış"):
+        from src.store.AuthContext import logout
+        logout()
+        
+    return selection
