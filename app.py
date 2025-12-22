@@ -14,7 +14,7 @@ def init_db():
     # Kullanıcılar Tablosu
     c.execute('''CREATE TABLE IF NOT EXISTS users 
                  (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT, password TEXT, role TEXT)''')
-    # İşler/Görevler Tablosu (Geliştirilmiş Şema)
+    # İşler/Görevler Tablosu
     c.execute('''CREATE TABLE IF NOT EXISTS tasks 
                  (id INTEGER PRIMARY KEY, title TEXT, assigned_to TEXT, city TEXT, status TEXT, 
                   note TEXT, report_note TEXT, file_count INTEGER, created_at TEXT, updated_at TEXT)''')
@@ -34,7 +34,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()
+if 'db_initialized' not in st.session_state:
+    init_db()
+    st.session_state['db_initialized'] = True
 
 # --- 2. YARDIMCI ARAÇLAR ---
 def get_greeting():
@@ -61,22 +63,21 @@ if 'user' not in st.session_state:
             if user:
                 st.session_state['user'] = user
                 st.rerun()
-            else:
-                st.error("Hatalı bilgiler.")
+            else: st.error("Hatalı e-posta veya şifre.")
     st.stop()
 
 user = st.session_state['user']
 role = user['role']
 
 # --- 4. NAVİGASYON (Sidebar) ---
-st.sidebar.title(f"Merhaba, {user['name']}")
+st.sidebar.title(f"👤 {user['name']}")
 st.sidebar.info(f"Yetki: {role}")
 
 menu_options = ["Ana Sayfa"]
 if role in ['Admin', 'Yönetici', 'Müdür']:
-    menu_options += ["İş Atama", "Atanan İşler", "Giriş Onayları", "TT Onay Bekleyenler"]
+    menu_options += ["İş Atama", "Atanan İşler", "TT Onay Bekleyenler"]
 if role in ['Admin', 'Yönetici']:
-    menu_options += ["Hak Ediş", "Kullanıcı Yönetimi"]
+    menu_options += ["Hak Ediş", "Giriş Onayları", "Kullanıcı Yönetimi"]
 if role == 'Saha Personeli':
     menu_options += ["Üzerime Atanan İşler", "Tamamladığım İşler"]
 menu_options += ["Zimmet & Envanter", "Profilim"]
@@ -89,7 +90,7 @@ if st.sidebar.button("Çıkış Yap"):
 
 # --- 5. MODÜLLER ---
 
-# A. ANA SAYFA & DASHBOARD
+# ANA SAYFA
 if choice == "Ana Sayfa":
     st.title(f"{get_greeting()}, {user['name']} 👋")
     conn = sqlite3.connect('anatolia_v75.db')
@@ -101,28 +102,30 @@ if choice == "Ana Sayfa":
     col2.metric("Onay Bekleyen", len(tasks_df[tasks_df['status'] == 'TT_Onayi_Bekliyor']))
     col3.metric("Tamamlanan", len(tasks_df[tasks_df['status'] == 'Hakedis_Alindi']))
 
-# B. İŞ ATAMA (Admin/Yön/Müdür)
+# İŞ ATAMA
 elif choice == "İş Atama":
     st.subheader("Yeni İş Atama")
     conn = sqlite3.connect('anatolia_v75.db')
     saha_users = pd.read_sql_query("SELECT name FROM users WHERE role='Saha Personeli'", conn)
     conn.close()
 
-    with st.form("job_form"):
-        t_title = st.text_input("İş Başlığı")
-        t_assigned = st.selectbox("Personel Seçin", saha_users['name'].tolist())
-        t_city = st.selectbox("Şehir", ["İstanbul", "Ankara", "İzmir", "Bursa", "Antalya"])
-        t_note = st.text_area("İş Notu")
-        if st.form_submit_button("İşi Ata"):
-            conn = sqlite3.connect('anatolia_v75.db')
-            c = conn.cursor()
-            c.execute("INSERT INTO tasks (title, assigned_to, city, status, note, created_at) VALUES (?,?,?,?,?,?)",
-                      (t_title, t_assigned, t_city, 'Atandı', t_note, datetime.now().strftime("%Y-%m-%d %H:%M")))
-            conn.commit()
-            conn.close()
-            st.success("İş başarıyla atandı.")
+    if saha_users.empty:
+        st.warning("⚠️ Önce kullanıcı yönetimi ekranından saha personeli eklemelisiniz.")
+    else:
+        with st.form("job_form"):
+            t_title = st.text_input("İş Başlığı")
+            t_assigned = st.selectbox("Personel Seçin", saha_users['name'].tolist())
+            t_city = st.selectbox("Şehir", ["İstanbul", "Ankara", "İzmir", "Bursa", "Antalya"])
+            t_note = st.text_area("İş Notu")
+            if st.form_submit_button("İşi Ata"):
+                conn = sqlite3.connect('anatolia_v75.db')
+                conn.execute("INSERT INTO tasks (title, assigned_to, city, status, note, created_at) VALUES (?,?,?,?,?,?)",
+                          (t_title, t_assigned, t_city, 'Atandı', t_note, datetime.now().strftime("%Y-%m-%d %H:%M")))
+                conn.commit(); conn.close()
+                st.success("İş başarıyla atandı.")
+                st.rerun()
 
-# C. SAHA PERSONELİ - ÜZERİME ATANAN İŞLER
+# SAHA PERSONELİ EKRANI
 elif choice == "Üzerime Atanan İşler":
     st.subheader("Aktif Görevlerim")
     conn = sqlite3.connect('anatolia_v75.db')
@@ -130,66 +133,38 @@ elif choice == "Üzerime Atanan İşler":
                                  conn, params=(user['name'],))
     conn.close()
 
-    for index, row in my_tasks.iterrows():
+    if my_tasks.empty: st.info("Şu an üzerinizde bekleyen iş yok.")
+    for _, row in my_tasks.iterrows():
         with st.expander(f"📌 {row['title']} - {row['city']}"):
-            st.write(f"**Not:** {row['note']}")
-            r_note = st.text_area("Çalışma Notu (Zorunlu)", key=f"note_{row['id']}")
-            files = st.file_uploader("Fotoğraflar (Max 65)", accept_multiple_files=True, key=f"file_{row['id']}")
-            
-            c1, c2 = st.columns(2)
-            if c1.button("Taslak Kaydet", key=f"draft_{row['id']}"):
-                # Taslak mantığı (Veritabanı update)
-                st.info("Taslak kaydedildi.")
-            if c2.button("İşi Gönder", key=f"send_{row['id']}"):
+            r_note = st.text_area("Çalışma Notu", key=f"n_{row['id']}")
+            files = st.file_uploader("Fotoğraflar", accept_multiple_files=True, key=f"f_{row['id']}")
+            if st.button("İşi Onaya Gönder", key=f"b_{row['id']}"):
                 if r_note:
                     conn = sqlite3.connect('anatolia_v75.db')
-                    c = conn.cursor()
-                    c.execute("UPDATE tasks SET status='TT_Onayi_Bekliyor', report_note=?, file_count=? WHERE id=?", 
+                    conn.execute("UPDATE tasks SET status='TT_Onayi_Bekliyor', report_note=?, file_count=? WHERE id=?", 
                               (r_note, len(files), row['id']))
-                    conn.commit()
-                    conn.close()
-                    st.success("İş onaya gönderildi.")
-                    st.rerun()
-                else: st.warning("Not girmelisiniz.")
+                    conn.commit(); conn.close()
+                    st.success("İş merkeze gönderildi."); st.rerun()
+                else: st.error("Lütfen rapor notu yazın.")
 
-# D. TT ONAY BEKLEYENLER (Admin/Müdür)
+# TT ONAY EKRANI
 elif choice == "TT Onay Bekleyenler":
-    st.subheader("Türk Telekom Onayı Bekleyen İşler")
+    st.subheader("Onay Bekleyen İşler")
     conn = sqlite3.connect('anatolia_v75.db')
     pending = pd.read_sql_query("SELECT * FROM tasks WHERE status='TT_Onayi_Bekliyor'", conn)
     conn.close()
-
-    st.table(pending[['title', 'assigned_to', 'city', 'report_note', 'file_count']])
     
-    selected_id = st.selectbox("İşlem Yapılacak İş ID", pending['id'].tolist() if not pending.empty else [None])
-    if selected_id:
-        c1, c2 = st.columns(2)
-        if c1.button("✅ Onayla (Hak Edişe Gönder)"):
-            conn = sqlite3.connect('anatolia_v75.db')
-            conn.execute("UPDATE tasks SET status='Hakedis_Bekliyor' WHERE id=?", (selected_id,))
-            conn.commit() ; conn.close()
-            st.rerun()
-        if c2.button("❌ Reddet"):
-            conn = sqlite3.connect('anatolia_v75.db')
-            conn.execute("UPDATE tasks SET status='Reddedildi' WHERE id=?", (selected_id,))
-            conn.commit() ; conn.close()
-            st.rerun()
+    st.dataframe(pending[['id', 'title', 'assigned_to', 'report_note', 'file_count']], use_container_width=True)
+    sel_id = st.number_input("İşlem Yapılacak İş ID", step=1)
+    if st.button("✅ TT Onayı Ver"):
+        conn = sqlite3.connect('anatolia_v75.db')
+        conn.execute("UPDATE tasks SET status='Hakedis_Bekliyor' WHERE id=?", (sel_id,))
+        conn.commit(); conn.close()
+        st.rerun()
 
-# E. ZİMMET & ENVANTER (Tüm Kullanıcılar)
+# ZİMMET & ENVANTER
 elif choice == "Zimmet & Envanter":
-    st.subheader("📦 Envanter ve Zimmet Takibi")
-    if role in ['Admin', 'Yönetici', 'Müdür']:
-        with st.expander("➕ Yeni Zimmet Ekle"):
-            i_name = st.text_input("Ekipman Adı")
-            i_serial = st.text_input("Seri No")
-            i_owner = st.text_input("Zimmetlenecek E-Posta")
-            if st.button("Kaydet"):
-                conn = sqlite3.connect('anatolia_v75.db')
-                conn.execute("INSERT INTO inventory (item_name, serial_no, owner_email, date) VALUES (?,?,?,?)",
-                             (i_name, i_serial, i_owner, datetime.now().strftime("%Y-%m-%d")))
-                conn.commit() ; conn.close()
-                st.success("Envanter eklendi.")
-
+    st.subheader("Envanter Takibi")
     conn = sqlite3.connect('anatolia_v75.db')
     if role == 'Saha Personeli':
         inv_df = pd.read_sql_query("SELECT * FROM inventory WHERE owner_email=?", conn, params=(user['email'],))
@@ -198,21 +173,12 @@ elif choice == "Zimmet & Envanter":
     conn.close()
     st.dataframe(inv_df, use_container_width=True)
 
-# F. PROFİLİM
+# PROFİLİM
 elif choice == "Profilim":
-    st.subheader("Profil Bilgileri")
-    st.write(f"**İsim:** {user['name']}")
-    st.write(f"**E-Posta:** {user['email']}")
-    new_phone = st.text_input("Telefon Numarası Güncelle", value=user['phone'])
-    if st.button("Güncelle"):
+    st.subheader("Hesap Bilgilerim")
+    new_phone = st.text_input("Telefon Güncelle", value=user['phone'])
+    if st.button("Kaydet"):
         conn = sqlite3.connect('anatolia_v75.db')
         conn.execute("UPDATE users SET phone=? WHERE id=?", (new_phone, user['id']))
-        conn.commit() ; conn.close()
-        st.success("Telefon güncellendi. Lütfen yeniden giriş yapın.")
-
-# --- 6. EXCEL RAPORLAMA FONKSİYONU ---
-if choice in ["Atanan İşler", "Tamamladığım İşler", "Hak Ediş"]:
-    st.sidebar.markdown("---")
-    if st.sidebar.button("📊 Excel Raporu Al"):
-        # Excel oluşturma mantığı buraya entegre edilir
-        st.sidebar.write("Rapor hazırlanıyor...")
+        conn.commit(); conn.close()
+        st.success("Bilgiler güncellendi. Yeni bilgiler bir sonraki girişte aktif olur.")
