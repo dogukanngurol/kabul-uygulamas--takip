@@ -3,33 +3,29 @@ from src.store.AuthContext import init_auth, login
 from src.layout.Sidebar import render_sidebar
 from src.utils.roleUtils import ROLES
 
-# Sayfa Konfigürasyonu
-st.set_page_config(page_title="İş Takip Demo", layout="wide")
-
+st.set_page_config(page_title="İş Takip Sistemi", layout="wide")
 init_auth()
 
-# Giriş Kontrolü
 if st.session_state.user is None:
     st.title("Sistem Girişi")
-    st.info("Lütfen bir rol seçerek giriş yapın (Demo)")
+    st.subheader("Lütfen bir rol seçerek sistemi simüle edin:")
     
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Admin Olarak Gir"): login(ROLES["ADMIN"])
-        if st.button("Yönetici Olarak Gir"): login(ROLES["MANAGER"])
-    with col2:
-        if st.button("Müdür Olarak Gir"): login(ROLES["DIRECTOR"])
-        if st.button("Saha Personeli Olarak Gir"): login(ROLES["FIELD"])
+    cols = st.columns(4)
+    if cols[0].button("Admin"): login(ROLES["ADMIN"])
+    if cols[1].button("Yönetici"): login(ROLES["MANAGER"])
+    if cols[2].button("Müdür"): login(ROLES["DIRECTOR"])
+    if cols[3].button("Saha"): login(ROLES["FIELD"])
+
 else:
-    # Kullanıcı giriş yaptıysa Sidebar ve Sayfaları göster
+    # Kullanıcı giriş yaptıysa menüyü ve içeriği göster
     selected_page = render_sidebar()
     
-    st.header(f"📍 {selected_page}")
+    st.title(f"📍 {selected_page}")
     
-    # Sayfa Yönlendirmeleri (Burada 'pages' altındaki dosyalar çağrılabilir)
+    # Basit sayfa yönlendirme mantığı
     if selected_page == "Dashboard":
-        st.write("Özet veriler buraya gelecek.")
-    elif selected_page == "Yeni İş Ata":
-        st.write("İş atama formu.")
+        st.write("Genel durum raporları burada görünecek.")
+    elif selected_page == "İş Atama":
+        st.write("Saha personeline iş atama formu.")
     elif selected_page == "Raporlar":
-        st.write("Grafikler ve tablolar.")
+        st.write("Detaylı performans analizleri.")
