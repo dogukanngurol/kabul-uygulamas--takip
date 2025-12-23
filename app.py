@@ -6,16 +6,19 @@ import io
 # --- 1. SİSTEM YAPILANDIRMASI VE VERİ SETİ ---
 st.set_page_config(page_title="Saha İş Takip Otomasyonu", layout="wide")
 
+# Veritabanı simülasyonu
 if 'db_jobs' not in st.session_state:
     st.session_state.db_jobs = pd.DataFrame(columns=[
         "Saha ID", "Personel", "Acıklama", "Durum", "Tarih", "Foto_RAR", "Red_Nedeni"
     ])
 
-if 'users' not in st.session_state:
-    st.session_state.users = pd.DataFrame([
-        {"İsim": "Admin", "Mail": "admin@sirket.com", "Rol": "Admin"},
-        {"İsim": "Saha1", "Mail": "saha1@sirket.com", "Rol": "Saha Personeli"}
-    ])
+# Kullanıcı veritabanı (Kullanıcı Adı: [Şifre, Rol])
+if 'user_db' not in st.session_state:
+    st.session_state.user_db = {
+        "admin": {"sifre": "1234", "rol": "Admin"},
+        "saha1": {"sifre": "4321", "rol": "Saha Personeli"},
+        "mudur1": {"sifre": "0000", "rol": "Müdür"}
+    }
 
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
@@ -36,21 +39,25 @@ def get_excel(df):
         df.to_excel(writer, index=False)
     return output.getvalue()
 
-# --- 3. GİRİŞ EKRANI ---
+# --- 3. GİRİŞ EKRANI (Kullanıcı Adı ve Şifre) ---
 if not st.session_state.logged_in:
     st.title("Saha Operasyon Girişi")
     with st.form("login_form"):
         u = st.text_input("Kullanıcı Adı")
-        r = st.selectbox("Rolünüz", ["Admin", "Yönetici", "Müdür", "Saha Personeli"])
-        if st.form_submit_button("Giriş Yap"):
-            st.session_state.logged_in = True
-            st.session_state.role = r
-            st.session_state.username = u
-            st.rerun()
+        p = st.text_input("Şifre", type="password")
+        submit = st.form_submit_button("Giriş Yap")
+        
+        if submit:
+            if u in st.session_state.user_db and st.session_state.user_db[u]["sifre"] == p:
+                st.session_state.logged_in = True
+                st.session_state.role = st.session_state.user_db[u]["rol"]
+                st.session_state.username = u
+                st.rerun()
+            else:
+                st.error("Hatalı kullanıcı adı veya şifre!")
 
 # --- 4. ANA PANEL ---
 else:
-    # Sidebar Menü Tasarımı
     st.sidebar.title("MENÜ")
     if st.session_state.role == "Saha Personeli":
         menu = ["Anasayfa", "Üzerime Atanan İşler", "İş Geçmişi", "Profil", "Çıkış"]
@@ -75,7 +82,7 @@ else:
     elif choice == "Üzerime Atanan İşler":
         st.subheader("Üzerime Atanan İşler")
         my_jobs = st.session_state.db_jobs[st.session_state.db_jobs["Personel"] == st.session_state.username]
-        active = my_jobs[~my_jobs["Durum"].isin(["Çalışma Tamamlandı", "Hak Ediş Alındı"])]
+        active = my_jobs[~my_jobs["Durum"].isin(["Hak Ediş Alındı"])]
         
         if not active.empty:
             target = st.selectbox("İş Seç", active["Saha ID"])
@@ -100,7 +107,9 @@ else:
         st.subheader("Yeni İş Atama")
         sid = st.text_input("Saha ID")
         det = st.text_area("İş Detayı")
-        per = st.selectbox("Personel", st.session_state.users[st.session_state.users["Rol"]=="Saha Personeli"]["İsim"])
+        # Sadece saha personellerini listele
+        saha_staff = [u for u, d in st.session_state.user_db.items() if d["rol"] == "Saha Personeli"]
+        per = st.selectbox("Personel", saha_staff)
         if st.button("Atamayı Yap"):
             new = {"Saha ID": sid, "Personel": per, "Acıklama": det, "Durum": "Yeni Atama", "Tarih": datetime.now()}
             st.session_state.db_jobs = pd.concat([st.session_state.db_jobs, pd.DataFrame([new])], ignore_index=True)
@@ -114,6 +123,7 @@ else:
             if st.button("Kabul Alınabilir"):
                 st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "Yeni Atama"
                 st.rerun()
+        st.download_button("Excel İndir", get_excel(df_izin), "izinler.xlsx")
 
     elif choice == "Geri Gelen Atamalar":
         df_geri = st.session_state.db_jobs[st.session_state.db_jobs["Durum"].isin(["Giriş Yapılamadı", "Mal Sahibi Tepkili"])]
@@ -123,6 +133,7 @@ else:
             if st.button("Kabul Alınabilir (Yeniden Ata)"):
                 st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "Yeni Atama"
                 st.rerun()
+        st.download_button("Excel İndir", get_excel(df_geri), "geri_gelenler.xlsx")
 
     elif choice == "Tamamlanan İşler":
         df_tamam = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "Çalışma Tamamlandı"]
@@ -160,24 +171,25 @@ else:
 
     elif choice == "Kullanıcı Kontrol":
         if st.session_state.role in ["Admin", "Yönetici"]:
-            st.subheader("Yeni Kullanıcı Ekle")
-            name = st.text_input("İsim Soyisim")
-            mail = st.text_input("Şirket Maili")
-            role = st.selectbox("Rol", ["Saha Personeli", "Müdür", "Yönetici"])
-            if st.button("Kullanıcı Oluştur"):
-                new_u = {"İsim": name, "Mail": mail, "Rol": role}
-                st.session_state.users = pd.concat([st.session_state.users, pd.DataFrame([new_u])], ignore_index=True)
-                st.success("Kullanıcı eklendi.")
-            st.dataframe(st.session_state.users)
+            st.subheader("Kullanıcı Yönetimi")
+            with st.form("new_user"):
+                n_u = st.text_input("Kullanıcı Adı")
+                n_p = st.text_input("Şifre")
+                n_r = st.selectbox("Rol", ["Saha Personeli", "Müdür", "Yönetici"])
+                if st.form_submit_button("Kullanıcı Ekle"):
+                    st.session_state.user_db[n_u] = {"sifre": n_p, "rol": n_r}
+                    st.success("Kullanıcı eklendi.")
+            st.write("Mevcut Kullanıcılar:", list(st.session_state.user_db.keys()))
         else: st.error("Yetkiniz yok.")
 
     elif choice == "Profil":
-        st.subheader("Profil Bilgileri")
-        st.text(f"Kullanıcı: {st.session_state.username}")
-        st.text(f"Mail: {st.session_state.username}@sirket.com")
-        st.text_input("Telefon Numarası", value="05xx")
-        st.text_input("Yeni Şifre", type="password")
-        st.button("Güncelle")
+        st.subheader("Profil Ayarları")
+        st.text(f"Kullanıcı: {st.session_state.username} | Rol: {st.session_state.role}")
+        st.text_input("Telefon", value="05xx")
+        yeni_sifre = st.text_input("Yeni Şifre", type="password")
+        if st.button("Şifreyi Güncelle"):
+            st.session_state.user_db[st.session_state.username]["sifre"] = yeni_sifre
+            st.success("Şifre güncellendi.")
 
     elif choice == "Çıkış":
         st.session_state.logged_in = False
