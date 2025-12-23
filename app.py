@@ -1,208 +1,184 @@
 import streamlit as st
-import sqlite3
 import pandas as pd
 from datetime import datetime
 import io
 
-# --- SABİT DEĞİŞKENLER ---
-ROLES = ["Admin", "Yönetici", "Müdür", "Saha Personeli"]
-DB_NAME = "app.db"
+# --- 1. SİSTEM YAPILANDIRMASI VE VERİ SETİ ---
+st.set_page_config(page_title="Saha İş Takip Otomasyonu", layout="wide")
 
-# --- VERİTABANI YARDIMCI FONKSİYONLARI ---
-def get_connection():
-    conn = sqlite3.connect(DB_NAME)
-    return conn
+if 'db_jobs' not in st.session_state:
+    st.session_state.db_jobs = pd.DataFrame(columns=[
+        "Saha ID", "Personel", "Acıklama", "Durum", "Tarih", "Foto_RAR", "Red_Nedeni"
+    ])
 
-def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    # Önce tabloları oluştur
-    cursor.execute('''CREATE TABLE IF NOT EXISTS users (
-                        user_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        email TEXT UNIQUE,
-                        password TEXT,
-                        user_name TEXT,
-                        user_role TEXT,
-                        phone TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS jobs (
-                        job_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        title TEXT,
-                        assigned_to INTEGER,
-                        city TEXT,
-                        status TEXT,
-                        hakedis_status TEXT,
-                        created_at TIMESTAMP,
-                        FOREIGN KEY(assigned_to) REFERENCES users(user_id))''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS job_files (
-                        file_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        job_id INTEGER,
-                        file_path TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS inventory (
-                        item_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        item_name TEXT,
-                        assigned_user_id INTEGER,
-                        FOREIGN KEY(assigned_user_id) REFERENCES users(user_id))''')
-    conn.commit() # Tablo oluşturma işlemlerini kaydet
-    
-    # Tablolar oluştuktan sonra kullanıcı kontrolü yap
-    cursor.execute("SELECT * FROM users WHERE email='admin1@sirket.com'")
-    if not cursor.fetchone():
-        cursor.execute("INSERT INTO users (email, password, user_name, user_role) VALUES (?,?,?,?)",
-                       ("admin1@sirket.com", "admin123", "Sistem Admin", "Admin"))
-        cursor.execute("INSERT INTO users (email, password, user_name, user_role) VALUES (?,?,?,?)",
-                       ("yonetici1@sirket.com", "yonetici123", "Proje Yöneticisi", "Yönetici"))
-        cursor.execute("INSERT INTO users (email, password, user_name, user_role) VALUES (?,?,?,?)",
-                       ("saha1@sirket.com", "saha123", "Saha Personeli 1", "Saha Personeli"))
-        conn.commit()
-    conn.close()
+if 'users' not in st.session_state:
+    st.session_state.users = pd.DataFrame([
+        {"İsim": "Admin", "Mail": "admin@sirket.com", "Rol": "Admin"},
+        {"İsim": "Saha1", "Mail": "saha1@sirket.com", "Rol": "Saha Personeli"}
+    ])
 
-def db_execute(query, params=(), fetch=False):
-    conn = get_connection()
-    cursor = conn.cursor()
-    try:
-        cursor.execute(query, params)
-        result = cursor.fetchall() if fetch else None
-        conn.commit()
-        return result
-    except Exception as e:
-        st.error(f"Veritabanı hatası: {e}")
-    finally:
-        conn.close()
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+    st.session_state.role = None
+    st.session_state.username = ""
 
-# --- YETKİ KONTROLLERİ ---
-def is_admin(): return st.session_state.get("user_role") == "Admin"
-def is_manager(): return st.session_state.get("user_role") in ["Admin", "Yönetici", "Müdür"]
-def is_field_staff(): return st.session_state.get("user_role") == "Saha Personeli"
-
-# --- YARDIMCI FONKSİYONLAR ---
-def get_greeting():
+# --- 2. YARDIMCI FONKSİYONLAR ---
+def get_greeting(name):
     hour = datetime.now().hour
-    if hour < 12: return "Günaydın"
-    elif hour < 18: return "Tünaydın"
-    else: return "İyi Akşamlar"
+    if 8 <= hour < 12: return f"Günaydın {name} İyi Çalışmalar"
+    elif 12 <= hour < 18: return f"İyi Günler {name} İyi Çalışmalar"
+    elif 18 <= hour < 24: return f"İyi Akşamlar {name} İyi Çalışmalar"
+    else: return f"İyi Geceler {name} İyi Çalışmalar"
 
-def export_to_excel(table_name):
-    conn = get_connection()
-    df = pd.read_sql(f"SELECT * FROM {table_name}", conn)
-    conn.close()
+def get_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Sheet1')
+        df.to_excel(writer, index=False)
     return output.getvalue()
 
-# --- SAYFA FONKSİYONLARI ---
-def login_screen():
-    st.title("İş Takip Sistemi Giriş")
-    email = st.text_input("Email")
-    password = st.text_input("Şifre", type="password")
-    if st.button("Giriş Yap"):
-        user = db_execute("SELECT user_id, user_name, user_role FROM users WHERE email=? AND password=?", (email, password), True)
-        if user:
+# --- 3. GİRİŞ EKRANI ---
+if not st.session_state.logged_in:
+    st.title("Saha Operasyon Girişi")
+    with st.form("login_form"):
+        u = st.text_input("Kullanıcı Adı")
+        r = st.selectbox("Rolünüz", ["Admin", "Yönetici", "Müdür", "Saha Personeli"])
+        if st.form_submit_button("Giriş Yap"):
             st.session_state.logged_in = True
-            st.session_state.user_id = user[0][0]
-            st.session_state.user_name = user[0][1]
-            st.session_state.user_role = user[0][2]
+            st.session_state.role = r
+            st.session_state.username = u
             st.rerun()
-        else:
-            st.error("Hatalı email veya şifre")
 
-def dashboard():
-    st.subheader(f"{get_greeting()}, {st.session_state.user_name}")
-    if is_manager():
-        col1, col2, col3 = st.columns(3)
-        total_res = db_execute("SELECT COUNT(*) FROM jobs", fetch=True)
-        pending_res = db_execute("SELECT COUNT(*) FROM jobs WHERE status='Beklemede'", fetch=True)
-        completed_res = db_execute("SELECT COUNT(*) FROM jobs WHERE status='Tamamlandı'", fetch=True)
-        
-        col1.metric("Toplam İş", total_res[0][0] if total_res else 0)
-        col2.metric("Bekleyen İş", pending_res[0][0] if pending_res else 0)
-        col3.metric("Tamamlanan İş", completed_res[0][0] if completed_res else 0)
-
-def job_assignment():
-    if not is_manager(): return st.warning("Yetkiniz yok.")
-    st.subheader("Yeni İş Ata")
-    users = db_execute("SELECT user_id, user_name FROM users", fetch=True)
-    if not users: return st.info("Henüz kullanıcı tanımlanmamış.")
-    
-    user_dict = {u[1]: u[0] for u in users}
-    title = st.text_input("İş Başlığı")
-    selected_user = st.selectbox("Personel", list(user_dict.keys()))
-    city = st.selectbox("Şehir", ["İstanbul", "Ankara", "İzmir", "Bursa", "Antalya", "Adana", "Konya", "Diğer..."])
-    
-    if st.button("Ata"):
-        db_execute("INSERT INTO jobs (title, assigned_to, city, status, hakedis_status, created_at) VALUES (?,?,?,?,?,?)",
-                   (title, user_dict[selected_user], city, "Beklemede", "Beklemede", datetime.now()))
-        st.success("İş başarıyla atandı.")
-
-def job_list():
-    st.subheader("İş Listesi")
-    query = "SELECT * FROM jobs"
-    if is_field_staff():
-        query += f" WHERE assigned_to = {st.session_state.user_id}"
-    
-    try:
-        df = pd.read_sql(query, get_connection())
-        st.dataframe(df)
-        if not df.empty:
-            job_to_update = st.selectbox("Güncellenecek İş ID", df['job_id'])
-            new_status = st.selectbox("Yeni Durum", ["Beklemede", "Devam Ediyor", "Tamamlandı"])
-            if st.button("Durum Güncelle"):
-                db_execute("UPDATE jobs SET status=? WHERE job_id=?", (new_status, job_to_update))
-                st.rerun()
-            st.download_button("Excel Olarak İndir", export_to_excel("jobs"), "is_listesi.xlsx")
-    except:
-        st.info("Henüz kayıtlı iş bulunamadı.")
-
-def user_management():
-    if not is_admin(): return st.warning("Bu sayfa sadece Admin erişimine açıktır.")
-    st.subheader("Kullanıcı Yönetimi")
-    with st.expander("Yeni Kullanıcı Ekle"):
-        new_email = st.text_input("Email")
-        new_pass = st.text_input("Şifre", type="password")
-        new_name = st.text_input("Ad Soyad")
-        new_role = st.selectbox("Rol", ROLES)
-        if st.button("Ekle"):
-            db_execute("INSERT INTO users (email, password, user_name, user_role) VALUES (?,?,?,?)",
-                       (new_email, new_pass, new_name, new_role))
-            st.success("Kullanıcı eklendi.")
-    
-    users_df = pd.read_sql("SELECT user_id, email, user_name, user_role FROM users", get_connection())
-    st.dataframe(users_df)
-    del_id = st.number_input("Silinecek Kullanıcı ID", step=1, value=0)
-    if del_id > 0 and st.button("Kullanıcıyı Sil"):
-        db_execute("DELETE FROM users WHERE user_id=?", (del_id,))
-        st.rerun()
-
-# --- ANA UYGULAMA DÖNGÜSÜ ---
-def main():
-    init_db()
-    if 'logged_in' not in st.session_state:
-        st.session_state.logged_in = False
-
-    if not st.session_state.logged_in:
-        login_screen()
+# --- 4. ANA PANEL ---
+else:
+    # Sidebar Menü Tasarımı
+    st.sidebar.title("MENÜ")
+    if st.session_state.role == "Saha Personeli":
+        menu = ["Anasayfa", "Üzerime Atanan İşler", "İş Geçmişi", "Profil", "Çıkış"]
     else:
-        st.sidebar.title("Anatoli Bilişim")
-        st.sidebar.write(f"**Kullanıcı:** {st.session_state.user_name}")
-        st.sidebar.write(f"**Rol:** {st.session_state.user_role}")
-        
-        menu = ["Dashboard", "İş Atama", "İş Listesi", "Kullanıcı Yönetimi", "Profil"]
-        choice = st.sidebar.radio("Menü", menu)
-        
-        if st.sidebar.button("Çıkış Yap"):
-            st.session_state.clear()
-            st.rerun()
+        menu = ["Anasayfa", "İş Ataması", "İzin Maili Bekleyenler", "Geri Gelen Atamalar", 
+                "Tamamlanan İşler", "TT Onayı Bekleyen İşler", "Hak Ediş", "Kullanıcı Kontrol", "Profil", "Çıkış"]
+    
+    choice = st.sidebar.radio("Sayfa Seçin", menu)
 
-        if choice == "Dashboard": dashboard()
-        elif choice == "İş Atama": job_assignment()
-        elif choice == "İş Listesi": job_list()
-        elif choice == "Kullanıcı Yönetimi": user_management()
-        elif choice == "Profil":
-            st.subheader("Profil Güncelleme")
-            new_phone = st.text_input("Telefon Numarası")
-            if st.button("Güncelle"):
-                db_execute("UPDATE users SET phone=? WHERE user_id=?", (new_phone, st.session_state.user_id))
-                st.success("Profil güncellendi.")
+    # --- ANASAYFA ---
+    if choice == "Anasayfa":
+        st.header(get_greeting(st.session_state.username))
+        df = st.session_state.db_jobs
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("Toplam İş", len(df))
+        c2.metric("Atanan İş", len(df[df["Durum"] == "Yeni Atama"]))
+        c3.metric("İzin Bekleyen", len(df[df["Durum"] == "İzin Maili Atılmalı"]))
+        c4.metric("Geri Gelen", len(df[df["Durum"].isin(["Giriş Yapılamadı", "Mal Sahibi Tepkili"])]))
+        c5.metric("TT Onay", len(df[df["Durum"] == "TT Onay Bekler"]))
 
-if __name__ == "__main__":
-    main()
+    # --- SAHA PERSONELİ EKRANLARI ---
+    elif choice == "Üzerime Atanan İşler":
+        st.subheader("Üzerime Atanan İşler")
+        my_jobs = st.session_state.db_jobs[st.session_state.db_jobs["Personel"] == st.session_state.username]
+        active = my_jobs[~my_jobs["Durum"].isin(["Çalışma Tamamlandı", "Hak Ediş Alındı"])]
+        
+        if not active.empty:
+            target = st.selectbox("İş Seç", active["Saha ID"])
+            status = st.selectbox("Durum", ["Giriş Yapılamadı", "İzin Maili Atılmalı", "Çalışma Tamamlandı", "Mal Sahibi Tepkili"])
+            desc = st.text_area("Açıklama")
+            file = st.file_uploader("Fotoğraflar (RAR)", type="rar")
+            if st.button("Atamayı Gönder"):
+                idx = st.session_state.db_jobs[st.session_state.db_jobs["Saha ID"] == target].index
+                st.session_state.db_jobs.loc[idx, "Durum"] = status
+                st.session_state.db_jobs.loc[idx, "Acıklama"] = desc
+                st.success("İş başarıyla güncellendi.")
+        else: st.info("Bekleyen işiniz yok.")
+
+    elif choice == "İş Geçmişi":
+        st.subheader("İş Geçmişim")
+        hist = st.session_state.db_jobs[st.session_state.db_jobs["Personel"] == st.session_state.username]
+        st.dataframe(hist.head(10))
+        st.download_button("Excel İndir", get_excel(hist), "gecmis.xlsx")
+
+    # --- YÖNETİM EKRANLARI ---
+    elif choice == "İş Ataması":
+        st.subheader("Yeni İş Atama")
+        sid = st.text_input("Saha ID")
+        det = st.text_area("İş Detayı")
+        per = st.selectbox("Personel", st.session_state.users[st.session_state.users["Rol"]=="Saha Personeli"]["İsim"])
+        if st.button("Atamayı Yap"):
+            new = {"Saha ID": sid, "Personel": per, "Acıklama": det, "Durum": "Yeni Atama", "Tarih": datetime.now()}
+            st.session_state.db_jobs = pd.concat([st.session_state.db_jobs, pd.DataFrame([new])], ignore_index=True)
+            st.success("Atama yapıldı.")
+
+    elif choice == "İzin Maili Bekleyenler":
+        df_izin = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "İzin Maili Atılmalı"]
+        st.table(df_izin.head(10))
+        if not df_izin.empty:
+            sid = st.selectbox("Saha ID", df_izin["Saha ID"])
+            if st.button("Kabul Alınabilir"):
+                st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "Yeni Atama"
+                st.rerun()
+
+    elif choice == "Geri Gelen Atamalar":
+        df_geri = st.session_state.db_jobs[st.session_state.db_jobs["Durum"].isin(["Giriş Yapılamadı", "Mal Sahibi Tepkili"])]
+        st.table(df_geri.head(10))
+        if not df_geri.empty:
+            sid = st.selectbox("Saha ID", df_geri["Saha ID"])
+            if st.button("Kabul Alınabilir (Yeniden Ata)"):
+                st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "Yeni Atama"
+                st.rerun()
+
+    elif choice == "Tamamlanan İşler":
+        df_tamam = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "Çalışma Tamamlandı"]
+        st.table(df_tamam.head(10))
+        if not df_tamam.empty:
+            sid = st.selectbox("İş Onayla/Reddet", df_tamam["Saha ID"])
+            reason = st.text_input("Red Nedeni (Sadece Red için)")
+            col_a, col_b = st.columns(2)
+            if col_a.button("Kabul OK"):
+                st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "TT Onay Bekler"
+                st.rerun()
+            if col_b.button("Kabul RET"):
+                idx = st.session_state.db_jobs[st.session_state.db_jobs["Saha ID"] == sid].index
+                st.session_state.db_jobs.loc[idx, "Durum"] = "Yeni Atama"
+                st.session_state.db_jobs.loc[idx, "Red_Nedeni"] = reason
+                st.rerun()
+
+    elif choice == "TT Onayı Bekleyen İşler":
+        df_tt = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "TT Onay Bekler"]
+        st.table(df_tt.head(10))
+        if not df_tt.empty:
+            sid = st.selectbox("TT Onay Seç", df_tt["Saha ID"])
+            if st.button("TT Onay Alındı"):
+                st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "Hak Ediş Bekliyor"
+                st.rerun()
+
+    elif choice == "Hak Ediş":
+        df_hak = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "Hak Ediş Bekliyor"]
+        st.table(df_hak.head(10))
+        if not df_hak.empty:
+            sid = st.selectbox("Hak Ediş Onay", df_hak["Saha ID"])
+            if st.button("Hak Ediş Alındı"):
+                st.session_state.db_jobs.loc[st.session_state.db_jobs["Saha ID"] == sid, "Durum"] = "Hak Ediş Alındı"
+                st.rerun()
+
+    elif choice == "Kullanıcı Kontrol":
+        if st.session_state.role in ["Admin", "Yönetici"]:
+            st.subheader("Yeni Kullanıcı Ekle")
+            name = st.text_input("İsim Soyisim")
+            mail = st.text_input("Şirket Maili")
+            role = st.selectbox("Rol", ["Saha Personeli", "Müdür", "Yönetici"])
+            if st.button("Kullanıcı Oluştur"):
+                new_u = {"İsim": name, "Mail": mail, "Rol": role}
+                st.session_state.users = pd.concat([st.session_state.users, pd.DataFrame([new_u])], ignore_index=True)
+                st.success("Kullanıcı eklendi.")
+            st.dataframe(st.session_state.users)
+        else: st.error("Yetkiniz yok.")
+
+    elif choice == "Profil":
+        st.subheader("Profil Bilgileri")
+        st.text(f"Kullanıcı: {st.session_state.username}")
+        st.text(f"Mail: {st.session_state.username}@sirket.com")
+        st.text_input("Telefon Numarası", value="05xx")
+        st.text_input("Yeni Şifre", type="password")
+        st.button("Güncelle")
+
+    elif choice == "Çıkış":
+        st.session_state.logged_in = False
+        st.rerun()
