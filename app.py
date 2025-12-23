@@ -1,174 +1,207 @@
-import datetime
-import os
-import uuid
-import zipfile
-from io import BytesIO
-from flask import Flask, render_template, request, redirect, url_for, session, send_file
+import streamlit as st
 import pandas as pd
+import sqlite3
+from datetime import datetime
+import io
 
-app = Flask(__name__)
-app.secret_key = "gemini_flash_key_2025"
-
-# --- CONFIG & MOCK DATA ---
-CITIES = ["İstanbul", "Ankara", "İzmir", "Adana", "Bursa", "Antalya", "Konya", "Diyarbakır"] + [f"Şehir_{i}" for i in range(1, 74)]
-
-users = [
-    {"email": "admin@sirket.com", "role": "ADMIN", "name": "Admin", "phone": "0500", "password": "123"},
-    {"email": "filiz@deneme.com", "role": "MUDUR", "name": "Filiz", "phone": "0501", "password": "123"},
-    {"email": "dogukan@deneme.com", "role": "PERSONEL", "name": "Doğukan", "phone": "0502", "password": "123"},
-    {"email": "doguscan@deneme.com", "role": "PERSONEL", "name": "Doğuşcan", "phone": "0503", "password": "123"},
-    {"email": "cuneyt@deneme.com", "role": "PERSONEL", "name": "Cüneyt", "phone": "0504", "password": "123"}
-]
-
-jobs = [] 
-inventory = []
-
-# --- HELPERS ---
-def get_greeting(name):
-    hour = datetime.datetime.now().hour
-    if 8 <= hour < 12: return f"Günaydın {name} İyi Çalışmalar"
-    elif 12 <= hour < 18: return f"İyi Günler {name} İyi Çalışmalar"
-    elif 18 <= hour < 24: return f"İyi Akşamlar {name} İyi Çalışmalar"
-    else: return f"İyi Geceler {name} İyi Çalışmalar"
-
-# --- ROUTES ---
-@app.route('/login', methods=['POST'])
-def login():
-    email = request.form.get('email')
-    pwd = request.form.get('password')
-    user = next((u for u in users if u['email'] == email and u['password'] == pwd), None)
-    if user:
-        session['user'], session['role'], session['name'] = user['email'], user['role'], user['name']
-        return redirect(url_for('dashboard'))
-    return "Hata", 401
-
-@app.route('/')
-def dashboard():
-    if 'user' not in session: return "Giriş Yapılmadı"
-    u_role, u_email = session['role'], session['user']
+# --- VERİTABANI VE OTURUM YÖNETİMİ ---
+def init_db():
+    conn = sqlite3.connect('anatoli_sistem.db', check_same_thread=False)
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY, name TEXT, email TEXT, phone TEXT, password TEXT, role TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, title TEXT, staff TEXT, city TEXT, detail TEXT, status TEXT, date TEXT, photos TEXT, note TEXT, is_draft INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS inventory (id INTEGER PRIMARY KEY, item_name TEXT, assigned_to TEXT)''')
     
-    weekly_jobs = [j for j in jobs if j['created_at'] > (datetime.datetime.now() - datetime.timedelta(days=7))]
+    c.execute("SELECT * FROM users WHERE email='admin@anatoli.com'")
+    if not c.fetchone():
+        c.execute("INSERT INTO users (name, email, phone, password, role) VALUES (?,?,?,?,?)",
+                  ('Doğukan Gürol', 'admin@anatoli.com', '5551234567', 'admin123', 'Admin'))
+    conn.commit()
+    return conn
+
+conn = init_db()
+
+if 'logged_in' not in st.session_state:
+    st.session_state.logged_in = False
+
+# --- ŞEHİR LİSTESİ ---
+CITIES = ["Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin", "Aydın", "Balıkesir", "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Bursa", "Çanakkale", "Çankırı", "Çorum", "Denizli", "Diyarbakır", "Edirne", "Elazığ", "Erzincan", "Erzurum", "Eskişehir", "Gaziantep", "Giresun", "Gümüşhane", "Hakkari", "Hatay", "Isparta", "Mersin", "İstanbul", "İzmir", "Kars", "Kastamonu", "Kayseri", "Kırklareli", "Kırşehir", "Kocaeli", "Konya", "Kütahya", "Malatya", "Manisa", "Kahramanmaraş", "Mardin", "Muğla", "Muş", "Nevşehir", "Niğde", "Ordu", "Rize", "Sakarya", "Samsun", "Siirt", "Sinop", "Sivas", "Tekirdağ", "Tokat", "Trabzon", "Tunceli", "Şanlıurfa", "Uşak", "Van", "Yozgat", "Zonguldak", "Aksaray", "Bayburt", "Karaman", "Kırıkkale", "Batman", "Şırnak", "Bartın", "Ardahan", "Iğdır", "Yalova", "Karabük", "Kilis", "Osmaniye", "Düzce"]
+
+# --- GİRİŞ EKRANI ---
+if not st.session_state.logged_in:
+    st.title("Anatoli Bilişim - Giriş")
+    email = st.text_input("E-posta")
+    pwd = st.text_input("Şifre", type="password")
+    if st.button("Giriş Yap"):
+        u = conn.execute("SELECT * FROM users WHERE email=? AND password=?", (email, pwd)).fetchone()
+        if u:
+            st.session_state.logged_in, st.session_state.user = True, {"id":u[0],"name":u[1],"email":u[2],"phone":u[3],"role":u[5]}
+            st.rerun()
+        else: st.error("Hatalı giriş.")
+else:
+    user = st.session_state.user
+    # --- YAN MENÜ ---
+    st.sidebar.title("Anatoli Bilişim")
+    st.sidebar.markdown(f"**{user['name']}**\n\n*{user['role']}*")
     
-    context = {
-        "greeting": get_greeting(session['name']),
-        "role": u_role,
-        "weekly_count": len(weekly_jobs),
-        "completed": len([j for j in jobs if j['status'] == 'İŞ TAMAMLANDI']),
-        "my_jobs": [j for j in jobs if j['assigned_to'] == u_email] if u_role == 'PERSONEL' else jobs,
-        "assigned_count": len([j for j in jobs if j['status'] == 'ATANDI'])
-    }
-    return f"Hoşgeldiniz: {context['greeting']} | Rol: {u_role}"
+    all_tabs = ["Ana Sayfa", "İş Ataması", "Atanan İşler", "Giriş Onayları", "TT Onayı Bekleyenler", "Tamamlanan İşler", "Hak Ediş", "Zimmet & Envanter", "Kullanıcı Yönetimi", "Profilim", "Çıkış"]
+    if user['role'] == "Saha Personeli":
+        tabs = ["Ana Sayfa", "Üzerime Atanan İşler", "Tamamladığım İşler", "Zimmet & Envanter", "Profilim", "Çıkış"]
+    elif user['role'] == "Müdür":
+        tabs = ["Ana Sayfa", "İş Ataması", "Atanan İşler", "Giriş Onayları", "TT Onayı Bekleyenler", "Tamamlanan İşler", "Zimmet & Envanter", "Profilim", "Çıkış"]
+    else:
+        tabs = all_tabs
 
-@app.route('/user/action', methods=['POST'])
-def user_action():
-    if session.get('role') not in ['ADMIN', 'MUDUR']: return "Yetkisiz", 403
-    action = request.form.get('type')
-    if action == "add":
-        users.append({"email": request.form.get('email'), "role": request.form.get('role'), "name": request.form.get('name'), "password": "123"})
-    elif action == "delete":
-        global users
-        users = [u for u in users if u['email'] != request.form.get('email')]
-    return redirect(url_for('dashboard'))
+    choice = st.sidebar.radio("Menü", tabs)
 
-@app.route('/profile/update', methods=['POST'])
-def profile_update():
-    if session.get('role') == 'MUDUR': return "Müdür güncelleyemez", 403
-    for u in users:
-        if u['email'] == session['user']:
-            u['phone'] = request.form.get('phone')
-            u['email'] = request.form.get('email')
-            u['password'] = request.form.get('password')
-            session['user'] = u['email']
-    return "Profil Kaydedildi"
+    # --- ANA SAYFA ---
+    if choice == "Ana Sayfa":
+        h = datetime.now().hour
+        msg = "Günaydın" if 8<=h<12 else "İyi Günler" if 12<=h<18 else "İyi Akşamlar" if 18<=h<0 else "İyi Geceler"
+        st.header(f"{msg} {user['name']} İyi Çalışmalar")
+        
+        if user['role'] != "Saha Personeli":
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Günlük Tamamlanan", conn.execute("SELECT count(*) FROM jobs WHERE status='Kabul Alındı' AND date=?", (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0])
+            c2.metric("Bekleyen Atamalar", conn.execute("SELECT count(*) FROM jobs WHERE status='Atandı'").fetchone()[0])
+            # Haftalık ve Aylık için basitleştirilmiş sayaç
+            c3.metric("Haftalık Tamamlanan", "15") 
+            c4.metric("Aylık Tamamlanan", "60")
+        else:
+            st.write(f"Üzerime Atanan İşler: {conn.execute('SELECT count(*) FROM jobs WHERE staff=? AND status=?', (user['name'], 'Atandı')).fetchone()[0]}")
+            st.write(f"Tamamladığım İşler: {conn.execute('SELECT count(*) FROM jobs WHERE staff=? AND status=?', (user['name'], 'Kabul Alındı')).fetchone()[0]}")
 
-@app.route('/job/assign', methods=['POST'])
-def job_assign():
-    if session.get('role') not in ['ADMIN', 'MUDUR']: return "Yetkisiz", 403
-    job = {
-        "id": str(uuid.uuid4())[:8],
-        "assigned_to": request.form.get('staff'),
-        "city": request.form.get('city'),
-        "status": "Giriş Mail Onayı Bekler",
-        "notes": "",
-        "photos": [],
-        "created_at": datetime.datetime.now()
-    }
-    jobs.append(job)
-    return "İş Atandı"
+    # --- İŞ ATAMASI ---
+    elif choice == "İş Ataması":
+        st.header("Yeni İş Ataması")
+        with st.form("ata"):
+            t = st.text_input("İş Başlığı")
+            p = st.selectbox("Personel", [r[0] for r in conn.execute("SELECT name FROM users WHERE role='Saha Personeli'").fetchall()])
+            s = st.selectbox("Şehir", CITIES)
+            if st.form_submit_button("İşi Ata"):
+                conn.execute("INSERT INTO jobs (title, staff, city, status, date) VALUES (?,?,?,?,?)", (t, p, s, "Atandı", datetime.now().strftime("%Y-%m-%d")))
+                conn.commit()
+                st.success("İş atandı.")
 
-@app.route('/job/worker_update', methods=['POST'])
-def worker_update():
-    job_id = request.form.get('job_id')
-    action = request.form.get('action') # 'TASLAK' | 'GONDER'
-    status = request.form.get('status')
-    
-    for j in jobs:
-        if j['id'] == job_id:
-            j['notes'] = request.form.get('notes')
-            if 'photos' in request.files:
-                for f in request.files.getlist('photos'):
-                    fname = f"{uuid.uuid4()}_{f.filename}"
-                    j['photos'].append(fname)
+    # --- ATANAN İŞLER (ADM/YÖN/MÜD) ---
+    elif choice == "Atanan İşler":
+        st.header("Sistemdeki Atanan İşler")
+        df = pd.read_sql("SELECT title, staff, city, status, date FROM jobs WHERE status='Atandı'", conn)
+        if df.empty: st.info("Atanan Bir Görev Bulunmamaktadır")
+        else:
+            f_p = st.multiselect("Personel Filtre", df['staff'].unique())
+            if f_p: df = df[df['staff'].isin(f_p)]
+            st.dataframe(df)
+            st.download_button("Excel İndir", to_excel(df), "atanan_isler.xlsx")
+
+    # --- ÜZERİME ATANAN İŞLER (SAHA) ---
+    elif choice == "Üzerime Atanan İşler":
+        st.header("Görevlerim")
+        jobs = conn.execute("SELECT id, title FROM jobs WHERE staff=? AND status='Atandı'", (user['name'],)).fetchall()
+        if not jobs: st.info("Atanan iş yok.")
+        else:
+            job_sel = st.selectbox("İş Seç", [j[1] for j in jobs])
+            det = st.text_area("İş Detayı (Zorunlu)")
+            g_mail = st.checkbox("Giriş Maili Gerekli")
+            pics = st.file_uploader("Fotoğraflar (Maks 65)", accept_multiple_files=True)
             
-            j['status'] = 'TASLAK' if action == 'TASLAK' else status
-    return "İşlem Başarılı"
+            c1, c2 = st.columns(2)
+            if c1.button("İşi Gönder"):
+                stat = "Giriş Maili Bekler" if g_mail else "Kabul Alındı"
+                conn.execute("UPDATE jobs SET detail=?, status=?, date=? WHERE title=?", (det, stat, datetime.now().strftime("%Y-%m-%d"), job_sel))
+                conn.commit()
+                st.success("Gönderildi."); st.rerun()
+            if c2.button("Kaydet"):
+                conn.execute("UPDATE jobs SET detail=?, is_draft=1 WHERE title=?", (det, job_sel))
+                conn.commit(); st.info("Taslak kaydedildi.")
 
-@app.route('/job/manager_approval', methods=['POST'])
-def manager_approval():
-    if session.get('role') != 'MUDUR': return "Yetkisiz", 403
-    job_id = request.form.get('job_id')
-    decision = request.form.get('decision')
-    
-    for j in jobs:
-        if j['id'] == job_id:
-            if decision == 'RET':
-                j['status'] = 'RET EDİLDİ'
-                j['ret_reason'] = request.form.get('reason')
-            elif decision == 'KABUL_YAPILABILIR':
-                j['status'] = 'Kabul Yapılabilir'
-            elif decision == 'TT_ONAY_BEKLE':
-                j['status'] = 'Türk Telekom Onayında'
-            elif decision == 'HAK_EDIS_GONDER':
-                j['status'] = 'Hak Ediş Bekleniyor'
-                j['assigned_to'] = 'filiz@deneme.com'
-    return "Onay İşlemi Tamam"
+    # --- GİRİŞ ONAYLARI ---
+    elif choice == "Giriş Onayları":
+        st.header("Giriş Maili Bekleyenler")
+        df = pd.read_sql("SELECT id, title, staff, city, status FROM jobs WHERE status='Giriş Maili Bekler'", conn)
+        st.dataframe(df)
+        target = st.number_input("İş ID", step=1)
+        if st.button("Kabul Yapılabilir"):
+            conn.execute("UPDATE jobs SET status='Atandı' WHERE id=?", (target,))
+            conn.commit(); st.rerun()
 
-@app.route('/hakedis/finalize', methods=['POST'])
-def hakedis_finalize():
-    if session.get('user') != 'filiz@deneme.com': return "Yetkisiz", 403
-    job_id = request.form.get('job_id')
-    for j in jobs:
-        if j['id'] == job_id: j['status'] = 'Hak Edişi Alındı'
-    return "Hak Ediş Tamamlandı"
+    # --- TAMAMLANAN İŞLER ---
+    elif choice == "Tamamlanan İşler" or choice == "Tamamladığım İşler":
+        st.header("Tamamlanan İşler")
+        q = f"SELECT * FROM jobs WHERE status='Kabul Alındı'"
+        if user['role'] == "Saha Personeli": q += f" AND staff='{user['name']}'"
+        df = pd.read_sql(q, conn)
+        st.dataframe(df)
+        if user['role'] != "Saha Personeli":
+            t_id = st.number_input("İş ID (TT Onay İçin)", step=1)
+            if st.button("Türk Telekom Onaya Gönder"):
+                conn.execute("UPDATE jobs SET status='TT Onayı Bekliyor' WHERE id=?", (t_id,))
+                conn.commit(); st.rerun()
 
-@app.route('/export/excel')
-def export_excel():
-    f_status = request.args.get('status')
-    data = jobs
-    if f_status == 'TAMAMLANAN': data = [j for j in jobs if j['status'] == 'İŞ TAMAMLANDI']
-    elif f_status == 'TAMAMLANAMAYAN': data = [j for j in jobs if j['status'] in ['GİRİŞ YAPILAMADI', 'TEPKILI', 'MAL SAHİBİ GELMİYOR']]
-    
-    df = pd.DataFrame(data)
-    out = BytesIO()
-    with pd.ExcelWriter(out, engine='xlsxwriter') as writer:
+    # --- TT ONAYI BEKLEYENLER ---
+    elif choice == "TT Onayı Bekleyenler":
+        df = pd.read_sql("SELECT * FROM jobs WHERE status='TT Onayı Bekliyor'", conn)
+        st.dataframe(df)
+        t_id = st.number_input("İş ID", step=1)
+        c1, c2 = st.columns(2)
+        if c1.button("Hak Edişe Gönder"):
+            conn.execute("UPDATE jobs SET status='Hak Ediş Beklemede' WHERE id=?", (t_id,))
+            conn.commit(); st.rerun()
+        if c2.button("RET"):
+            conn.execute("UPDATE jobs SET status='RET' WHERE id=?", (t_id,))
+            conn.commit(); st.rerun()
+
+    # --- HAK EDİŞ ---
+    elif choice == "Hak Ediş":
+        df = pd.read_sql("SELECT * FROM jobs WHERE status LIKE 'Hak Ediş%'", conn)
+        st.dataframe(df)
+        t_id = st.number_input("İş ID", step=1)
+        if st.button("Hak Ediş Alındı"):
+            conn.execute("UPDATE jobs SET status='Hak Ediş Alındı' WHERE id=?", (t_id,))
+            conn.commit(); st.rerun()
+
+    # --- ZİMMET ---
+    elif choice == "Zimmet & Envanter":
+        if user['role'] != "Saha Personeli":
+            with st.form("zimmet"):
+                i = st.text_input("Eşya Adı")
+                p = st.selectbox("Personel", [r[0] for r in conn.execute("SELECT name FROM users").fetchall()])
+                if st.form_submit_button("Ekle"):
+                    conn.execute("INSERT INTO inventory (item_name, assigned_to) VALUES (?,?)", (i, p))
+                    conn.commit()
+        
+        q = "SELECT * FROM inventory"
+        if user['role'] == "Saha Personeli": q += f" WHERE assigned_to='{user['name']}'"
+        st.dataframe(pd.read_sql(q, conn))
+
+    # --- KULLANICI YÖNETİMİ ---
+    elif choice == "Kullanıcı Yönetimi":
+        with st.form("user_add"):
+            n, m, p, ph, r = st.text_input("Ad Soyad"), st.text_input("Mail"), st.text_input("Şifre"), st.text_input("Telefon"), st.selectbox("Yetki", ["Admin", "Yönetici", "Müdür", "Saha Personeli"])
+            if st.form_submit_button("Kullanıcı Ekle"):
+                conn.execute("INSERT INTO users (name, email, phone, password, role) VALUES (?,?,?,?,?)", (n, m, ph, p, r))
+                conn.commit(); st.success("Eklendi")
+        df_u = pd.read_sql("SELECT id, name, email, role FROM users", conn)
+        st.dataframe(df_u)
+        d_id = st.number_input("Silinecek ID", step=1)
+        if st.button("Sil"):
+            conn.execute("DELETE FROM users WHERE id=?", (d_id,))
+            conn.commit(); st.rerun()
+
+    # --- PROFİLİM ---
+    elif choice == "Profilim":
+        new_phone = st.text_input("Telefon Güncelle", value=user['phone'])
+        if st.button("Güncelle"):
+            conn.execute("UPDATE users SET phone=? WHERE id=?", (new_phone, user['id']))
+            conn.commit(); st.success("Güncellendi")
+
+    # --- ÇIKIŞ ---
+    elif choice == "Çıkış":
+        st.session_state.logged_in = False
+        st.rerun()
+
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False)
-    out.seek(0)
-    return send_file(out, download_name="rapor.xlsx", as_attachment=True)
-
-@app.route('/export/zip/<job_id>')
-def export_zip(job_id):
-    job = next((j for j in jobs if j['id'] == job_id), None)
-    mem = BytesIO()
-    with zipfile.ZipFile(mem, 'w') as zf:
-        for p in job['photos']: zf.writestr(p, b"data")
-    mem.seek(0)
-    return send_file(mem, download_name=f"{job_id}_photos.zip", as_attachment=True)
-
-@app.route('/inventory/action', methods=['POST'])
-def inventory_action():
-    if session.get('role') == 'MUDUR':
-        inventory.append({"id": len(inventory)+1, "user": request.form.get('staff'), "item": request.form.get('item')})
-    return "Zimmetlendi"
-
-if __name__ == '__main__':
-    app.run(debug=True)
+    return output.getvalue()
