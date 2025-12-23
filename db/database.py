@@ -1,16 +1,18 @@
 import sqlite3
 import hashlib
+from datetime import datetime
+from utils.constants import STATUSES, ROLES
 
 DB_NAME = "app.db"
 
 def get_connection():
-    return sqlite3.connect(DB_NAME)
+    return sqlite3.connect(DB_NAME, check_same_thread=False)
 
 def create_tables():
     conn = get_connection()
     c = conn.cursor()
-    
-    # Kullanıcılar Tablosu
+
+    # Users Tablosu
     c.execute('''
         CREATE TABLE IF NOT EXISTS users (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -19,29 +21,51 @@ def create_tables():
             role TEXT NOT NULL
         )
     ''')
-    
-    # Görevler Tablosu
+
+    # Jobs Tablosu
     c.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
+        CREATE TABLE IF NOT EXISTS jobs (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             title TEXT NOT NULL,
             description TEXT,
-            assigned_to INTEGER,
             status TEXT NOT NULL,
+            assigned_to INTEGER,
             created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(assigned_to) REFERENCES users(id),
             FOREIGN KEY(created_by) REFERENCES users(id)
         )
     ''')
-    
-    # Varsayılan Admin Kullanıcısı (Şifre: admin123)
-    # Gerçek uygulamada şifreleme (hash) daha güvenli yapılmalıdır.
+
+    # Job Files Tablosu
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS job_files (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            job_id INTEGER NOT NULL,
+            file_path TEXT NOT NULL,
+            uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(job_id) REFERENCES jobs(id) ON DELETE CASCADE
+        )
+    ''')
+
+    # Inventory Tablosu
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS inventory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            item_name TEXT NOT NULL,
+            quantity INTEGER DEFAULT 0,
+            unit_price REAL DEFAULT 0.0,
+            last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    ''')
+
+    # Varsayılan Admin Kullanıcısı
     try:
         default_pass = hashlib.sha256("admin123".encode()).hexdigest()
         c.execute("INSERT INTO users (username, password, role) VALUES (?, ?, ?)", 
                   ("admin", default_pass, "Admin"))
     except sqlite3.IntegrityError:
-        pass # Admin zaten var
+        pass 
 
     conn.commit()
     conn.close()
@@ -54,44 +78,3 @@ def login_user(username, password):
     user = c.fetchone()
     conn.close()
     return user
-
-def get_all_users():
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("SELECT id, username, role FROM users")
-    data = c.fetchall()
-    conn.close()
-    return data
-
-def add_task(title, description, assigned_to, created_by, status):
-    conn = get_connection()
-    c = conn.cursor()
-    c.execute("INSERT INTO tasks (title, description, assigned_to, created_by, status) VALUES (?, ?, ?, ?, ?)",
-              (title, description, assigned_to, created_by, status))
-    conn.commit()
-    conn.close()
-
-def get_tasks_for_user(user_id, role):
-    conn = get_connection()
-    c = conn.cursor()
-    if role in ["Admin", "Yönetici", "Müdür"]:
-        # Yöneticiler tüm görevleri görür
-        query = """
-            SELECT t.id, t.title, t.description, t.status, u.username as assigned_user 
-            FROM tasks t 
-            LEFT JOIN users u ON t.assigned_to = u.id
-        """
-        c.execute(query)
-    else:
-        # Saha personeli sadece kendine atananları görür
-        query = """
-            SELECT t.id, t.title, t.description, t.status, u.username as assigned_user 
-            FROM tasks t 
-            LEFT JOIN users u ON t.assigned_to = u.id 
-            WHERE t.assigned_to = ?
-        """
-        c.execute(query, (user_id,))
-    
-    data = c.fetchall()
-    conn.close()
-    return data
