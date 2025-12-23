@@ -1,7 +1,6 @@
 import streamlit as st
 from db.database import create_tables
 from auth.login import login_page, logout
-from utils.helpers import get_greeting
 
 st.set_page_config(page_title="Anatoli Bilişim", layout="wide")
 
@@ -20,36 +19,55 @@ if not st.session_state.logged_in:
     login_page()
 else:
     st.sidebar.title("Anatoli Bilişim")
-    st.sidebar.markdown(f"### {get_greeting()}, {st.session_state.user_name}")
+    st.sidebar.markdown(f"**{st.session_state.user_name}**")
     st.sidebar.caption(f"Rol: {st.session_state.user_role}")
     st.sidebar.divider()
 
-    menu = ["Ana Panel", "İş Takibi", "Envanter & Zimmet", "Raporlar"]
+    menu_options = {
+        "Ana Panel": "dashboard",
+        "İş Atama": "job_assign",
+        "Giriş Onayları": "entry_approvals",
+        "TT Onayları": "tt_approvals",
+        "Atanan İşler": "assigned_jobs",
+        "Hak Ediş": "hak_edis",
+        "Tamamlananlar": "completed_jobs",
+        "Envanter": "inventory",
+        "Kullanıcılar": "users",
+        "Profil": "profile"
+    }
     
-    if st.session_state.user_role in ["Admin", "Yönetici"]:
-        menu.append("Kullanıcı Yönetimi")
-
-    choice = st.sidebar.radio("Menü", menu)
+    choice = st.sidebar.selectbox("Menü", list(menu_options.keys()))
 
     if choice == "Ana Panel":
-        st.header("Genel Durum Paneli")
-        st.write(f"Hoş geldiniz, {st.session_state.user_name}. Lütfen soldaki menüden işlem seçin.")
-        
-    elif choice == "İş Takibi":
-        from pages.jobs import jobs_page
-        jobs_page()
-        
-    elif choice == "Envanter & Zimmet":
+        from pages.dashboard import dashboard_page
+        dashboard_page()
+    elif choice == "İş Atama":
+        from pages.job_assign import job_assign_page
+        job_assign_page()
+    elif choice == "Giriş Onayları":
+        from pages.entry_approvals import entry_approvals_page
+        entry_approvals_page()
+    elif choice == "TT Onayları":
+        from pages.tt_approvals import tt_approvals_page
+        tt_approvals_page()
+    elif choice == "Atanan İşler":
+        from pages.assigned_jobs import assigned_jobs_page
+        assigned_jobs_page()
+    elif choice == "Hak Ediş":
+        from pages.hak_edis import hak_edis_page
+        hak_edis_page()
+    elif choice == "Tamamlananlar":
+        from pages.completed_jobs import completed_jobs_page
+        completed_jobs_page()
+    elif choice == "Envanter":
         from pages.inventory import inventory_page
         inventory_page()
-        
-    elif choice == "Raporlar":
-        from pages.reports import reports_page
-        reports_page()
-        
-    elif choice == "Kullanıcı Yönetimi":
-        from pages.admin import admin_page
-        admin_page()
+    elif choice == "Kullanıcılar":
+        from pages.users import users_page
+        users_page()
+    elif choice == "Profil":
+        from pages.profile import profile_page
+        profile_page()
 
     st.sidebar.divider()
     if st.sidebar.button("Güvenli Çıkış"):
