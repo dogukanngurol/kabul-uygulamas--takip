@@ -1,25 +1,25 @@
 import sqlite3
+import hashlib
+
+def hash_password(password):
+    return hashlib.sha256(str.encode(password)).hexdigest()
 
 DB_NAME = "app.db"
 
-def create_admin():
-    conn = sqlite3.connect(DB_NAME)
-    cursor = conn.cursor()
+conn = sqlite3.connect(DB_NAME)
+cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT INTO users (name, email, phone, password, role)
-        VALUES (?, ?, ?, ?, ?)
-    """, (
-        "Admin",
-        "admin@anatoli.com",
-        "0000000000",
-        "1234",
-        "Admin"
-    ))
+cursor.execute("""
+INSERT INTO users (name, email, phone, password, role)
+VALUES (?, ?, ?, ?, ?)
+""", (
+    "Admin",
+    "admin@anatoli.com",
+    "0000000000",
+    hash_password("1234"),
+    "Admin"
+))
 
-    conn.commit()
-    conn.close()
-    print("Admin kullanıcı oluşturuldu.")
-
-if __name__ == "__main__":
-    create_admin()
+conn.commit()
+conn.close()
+print("Admin hashli olarak oluşturuldu.")
