@@ -21,10 +21,15 @@ def init_db():
 
 conn = init_db()
 
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False)
+    return output.getvalue()
+
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
 
-# --- ŞEHİR LİSTESİ ---
 CITIES = ["Adana", "Adıyaman", "Afyonkarahisar", "Ağrı", "Amasya", "Ankara", "Antalya", "Artvin", "Aydın", "Balıkesir", "Bilecik", "Bingöl", "Bitlis", "Bolu", "Burdur", "Bursa", "Çanakkale", "Çankırı", "Çorum", "Denizli", "Diyarbakır", "Edirne", "Elazığ", "Erzincan", "Erzurum", "Eskişehir", "Gaziantep", "Giresun", "Gümüşhane", "Hakkari", "Hatay", "Isparta", "Mersin", "İstanbul", "İzmir", "Kars", "Kastamonu", "Kayseri", "Kırklareli", "Kırşehir", "Kocaeli", "Konya", "Kütahya", "Malatya", "Manisa", "Kahramanmaraş", "Mardin", "Muğla", "Muş", "Nevşehir", "Niğde", "Ordu", "Rize", "Sakarya", "Samsun", "Siirt", "Sinop", "Sivas", "Tekirdağ", "Tokat", "Trabzon", "Tunceli", "Şanlıurfa", "Uşak", "Van", "Yozgat", "Zonguldak", "Aksaray", "Bayburt", "Karaman", "Kırıkkale", "Batman", "Şırnak", "Bartın", "Ardahan", "Iğdır", "Yalova", "Karabük", "Kilis", "Osmaniye", "Düzce"]
 
 # --- GİRİŞ EKRANI ---
@@ -40,7 +45,6 @@ if not st.session_state.logged_in:
         else: st.error("Hatalı giriş.")
 else:
     user = st.session_state.user
-    # --- YAN MENÜ ---
     st.sidebar.title("Anatoli Bilişim")
     st.sidebar.markdown(f"**{user['name']}**\n\n*{user['role']}*")
     
@@ -57,36 +61,42 @@ else:
     # --- ANA SAYFA ---
     if choice == "Ana Sayfa":
         h = datetime.now().hour
-        msg = "Günaydın" if 8<=h<12 else "İyi Günler" if 12<=h<18 else "İyi Akşamlar" if 18<=h<0 else "İyi Geceler"
+        msg = "Günaydın" if 8<=h<12 else "İyi Günler" if 12<=h<18 else "İyi Akşamlar" if 18<=h<23 else "İyi Geceler"
         st.header(f"{msg} {user['name']} İyi Çalışmalar")
-        
         if user['role'] != "Saha Personeli":
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Günlük Tamamlanan", conn.execute("SELECT count(*) FROM jobs WHERE status='Kabul Alındı' AND date=?", (datetime.now().strftime("%Y-%m-%d"),)).fetchone()[0])
             c2.metric("Bekleyen Atamalar", conn.execute("SELECT count(*) FROM jobs WHERE status='Atandı'").fetchone()[0])
-            # Haftalık ve Aylık için basitleştirilmiş sayaç
             c3.metric("Haftalık Tamamlanan", "15") 
             c4.metric("Aylık Tamamlanan", "60")
         else:
             st.write(f"Üzerime Atanan İşler: {conn.execute('SELECT count(*) FROM jobs WHERE staff=? AND status=?', (user['name'], 'Atandı')).fetchone()[0]}")
             st.write(f"Tamamladığım İşler: {conn.execute('SELECT count(*) FROM jobs WHERE staff=? AND status=?', (user['name'], 'Kabul Alındı')).fetchone()[0]}")
 
-    # --- İŞ ATAMASI ---
+    # --- İŞ ATAMASI (GÜNCEL PERSONEL LİSTESİ İLE) ---
     elif choice == "İş Ataması":
         st.header("Yeni İş Ataması")
-        with st.form("ata"):
-            t = st.text_input("İş Başlığı")
-            p = st.selectbox("Personel", [r[0] for r in conn.execute("SELECT name FROM users WHERE role='Saha Personeli'").fetchall()])
-            s = st.selectbox("Şehir", CITIES)
-            if st.form_submit_button("İşi Ata"):
-                conn.execute("INSERT INTO jobs (title, staff, city, status, date) VALUES (?,?,?,?,?)", (t, p, s, "Atandı", datetime.now().strftime("%Y-%m-%d")))
-                conn.commit()
-                st.success("İş atandı.")
+        staff_query = conn.execute("SELECT name FROM users WHERE role='Saha Personeli'").fetchall()
+        staff_list = [r[0] for r in staff_query]
+        
+        if not staff_list:
+            st.error("Sistemde kayıtlı Saha Personeli bulunamadı. Lütfen önce 'Kullanıcı Yönetimi' sekmesinden Saha Personeli ekleyin.")
+        else:
+            with st.form("ata"):
+                t = st.text_input("İş Başlığı")
+                p = st.selectbox("Personel", options=staff_list)
+                s = st.selectbox("Şehir", options=CITIES)
+                if st.form_submit_button("İşi Ata"):
+                    if t:
+                        conn.execute("INSERT INTO jobs (title, staff, city, status, date) VALUES (?,?,?,?,?)", (t, p, s, "Atandı", datetime.now().strftime("%Y-%m-%d")))
+                        conn.commit()
+                        st.success(f"İş başarıyla {p} personeline atandı.")
+                    else: st.warning("Lütfen bir iş başlığı giriniz.")
 
     # --- ATANAN İŞLER (ADM/YÖN/MÜD) ---
     elif choice == "Atanan İşler":
         st.header("Sistemdeki Atanan İşler")
-        df = pd.read_sql("SELECT title, staff, city, status, date FROM jobs WHERE status='Atandı'", conn)
+        df = pd.read_sql("SELECT id, title, staff, city, status, date FROM jobs WHERE status='Atandı'", conn)
         if df.empty: st.info("Atanan Bir Görev Bulunmamaktadır")
         else:
             f_p = st.multiselect("Personel Filtre", df['staff'].unique())
@@ -104,13 +114,11 @@ else:
             det = st.text_area("İş Detayı (Zorunlu)")
             g_mail = st.checkbox("Giriş Maili Gerekli")
             pics = st.file_uploader("Fotoğraflar (Maks 65)", accept_multiple_files=True)
-            
             c1, c2 = st.columns(2)
             if c1.button("İşi Gönder"):
                 stat = "Giriş Maili Bekler" if g_mail else "Kabul Alındı"
                 conn.execute("UPDATE jobs SET detail=?, status=?, date=? WHERE title=?", (det, stat, datetime.now().strftime("%Y-%m-%d"), job_sel))
-                conn.commit()
-                st.success("Gönderildi."); st.rerun()
+                conn.commit(); st.success("Gönderildi."); st.rerun()
             if c2.button("Kaydet"):
                 conn.execute("UPDATE jobs SET detail=?, is_draft=1 WHERE title=?", (det, job_sel))
                 conn.commit(); st.info("Taslak kaydedildi.")
@@ -128,11 +136,11 @@ else:
     # --- TAMAMLANAN İŞLER ---
     elif choice == "Tamamlanan İşler" or choice == "Tamamladığım İşler":
         st.header("Tamamlanan İşler")
-        q = f"SELECT * FROM jobs WHERE status='Kabul Alındı'"
+        q = "SELECT * FROM jobs WHERE status='Kabul Alındı'"
         if user['role'] == "Saha Personeli": q += f" AND staff='{user['name']}'"
         df = pd.read_sql(q, conn)
         st.dataframe(df)
-        if user['role'] != "Saha Personeli":
+        if user['role'] != "Saha Personeli" and not df.empty:
             t_id = st.number_input("İş ID (TT Onay İçin)", step=1)
             if st.button("Türk Telekom Onaya Gönder"):
                 conn.execute("UPDATE jobs SET status='TT Onayı Bekliyor' WHERE id=?", (t_id,))
@@ -142,23 +150,25 @@ else:
     elif choice == "TT Onayı Bekleyenler":
         df = pd.read_sql("SELECT * FROM jobs WHERE status='TT Onayı Bekliyor'", conn)
         st.dataframe(df)
-        t_id = st.number_input("İş ID", step=1)
-        c1, c2 = st.columns(2)
-        if c1.button("Hak Edişe Gönder"):
-            conn.execute("UPDATE jobs SET status='Hak Ediş Beklemede' WHERE id=?", (t_id,))
-            conn.commit(); st.rerun()
-        if c2.button("RET"):
-            conn.execute("UPDATE jobs SET status='RET' WHERE id=?", (t_id,))
-            conn.commit(); st.rerun()
+        if not df.empty:
+            t_id = st.number_input("İş ID", step=1)
+            c1, c2 = st.columns(2)
+            if c1.button("Hak Edişe Gönder"):
+                conn.execute("UPDATE jobs SET status='Hak Ediş Beklemede' WHERE id=?", (t_id,))
+                conn.commit(); st.rerun()
+            if c2.button("RET"):
+                conn.execute("UPDATE jobs SET status='RET' WHERE id=?", (t_id,))
+                conn.commit(); st.rerun()
 
     # --- HAK EDİŞ ---
     elif choice == "Hak Ediş":
         df = pd.read_sql("SELECT * FROM jobs WHERE status LIKE 'Hak Ediş%'", conn)
         st.dataframe(df)
-        t_id = st.number_input("İş ID", step=1)
-        if st.button("Hak Ediş Alındı"):
-            conn.execute("UPDATE jobs SET status='Hak Ediş Alındı' WHERE id=?", (t_id,))
-            conn.commit(); st.rerun()
+        if not df.empty:
+            t_id = st.number_input("İş ID", step=1)
+            if st.button("Hak Ediş Alındı"):
+                conn.execute("UPDATE jobs SET status='Hak Ediş Alındı' WHERE id=?", (t_id,))
+                conn.commit(); st.rerun()
 
     # --- ZİMMET ---
     elif choice == "Zimmet & Envanter":
@@ -168,8 +178,7 @@ else:
                 p = st.selectbox("Personel", [r[0] for r in conn.execute("SELECT name FROM users").fetchall()])
                 if st.form_submit_button("Ekle"):
                     conn.execute("INSERT INTO inventory (item_name, assigned_to) VALUES (?,?)", (i, p))
-                    conn.commit()
-        
+                    conn.commit(); st.success("Eklendi")
         q = "SELECT * FROM inventory"
         if user['role'] == "Saha Personeli": q += f" WHERE assigned_to='{user['name']}'"
         st.dataframe(pd.read_sql(q, conn))
@@ -180,11 +189,11 @@ else:
             n, m, p, ph, r = st.text_input("Ad Soyad"), st.text_input("Mail"), st.text_input("Şifre"), st.text_input("Telefon"), st.selectbox("Yetki", ["Admin", "Yönetici", "Müdür", "Saha Personeli"])
             if st.form_submit_button("Kullanıcı Ekle"):
                 conn.execute("INSERT INTO users (name, email, phone, password, role) VALUES (?,?,?,?,?)", (n, m, ph, p, r))
-                conn.commit(); st.success("Eklendi")
+                conn.commit(); st.success("Kullanıcı Eklendi"); st.rerun()
         df_u = pd.read_sql("SELECT id, name, email, role FROM users", conn)
         st.dataframe(df_u)
         d_id = st.number_input("Silinecek ID", step=1)
-        if st.button("Sil"):
+        if st.button("Kullanıcı Sil"):
             conn.execute("DELETE FROM users WHERE id=?", (d_id,))
             conn.commit(); st.rerun()
 
@@ -193,15 +202,9 @@ else:
         new_phone = st.text_input("Telefon Güncelle", value=user['phone'])
         if st.button("Güncelle"):
             conn.execute("UPDATE users SET phone=? WHERE id=?", (new_phone, user['id']))
-            conn.commit(); st.success("Güncellendi")
+            conn.commit(); st.success("Profil güncellendi")
 
     # --- ÇIKIŞ ---
     elif choice == "Çıkış":
         st.session_state.logged_in = False
         st.rerun()
-
-def to_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False)
-    return output.getvalue()
