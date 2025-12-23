@@ -6,7 +6,6 @@ import io
 # --- 1. SİSTEM YAPILANDIRMASI ---
 st.set_page_config(page_title="Saha İş Takip Sistemi", layout="wide")
 
-# Veri Depolama Yapılandırması
 if 'db_jobs' not in st.session_state:
     st.session_state.db_jobs = pd.DataFrame(columns=[
         "Saha ID", "Personel", "Acıklama", "Durum", "Tarih", "Red_Nedeni"
@@ -24,7 +23,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = None
     st.session_state.username = ""
 
-# --- 2. YARDIMCI FONKSİYONLAR ---
+# --- 2. FONKSİYONLAR ---
 def get_greeting(name):
     hour = datetime.now().hour
     if 8 <= hour < 12: return f"Günaydın {name} İyi Çalışmalar"
@@ -78,15 +77,15 @@ else:
     # --- SAHA PERSONELİ: ÜZERİME ATANAN İŞLER ---
     elif choice == "Üzerime Atanan İşler":
         st.subheader("Üzerime Atanan İşler")
-        # Aktif iş filtreleme (Yeni Atama veya Geri Gönderilenler)
+        # Filtreleme düzeltildi: Boşluk ve case-sensitive kontrolleri için strip() eklendi
         my_active_jobs = st.session_state.db_jobs[
-            (st.session_state.db_jobs["Personel"] == st.session_state.username) & 
+            (st.session_state.db_jobs["Personel"].str.strip() == st.session_state.username.strip()) & 
             (st.session_state.db_jobs["Durum"].isin(["Yeni Atama", "İzin Maili Bekleniyor", "Bekleniyor"]))
         ]
         
         if not my_active_jobs.empty:
             st.dataframe(my_active_jobs[["Saha ID", "Acıklama", "Durum", "Tarih"]], use_container_width=True)
-            target = st.selectbox("İşlem Yapılacak Saha ID", my_active_jobs["Saha ID"])
+            target = st.selectbox("İşlem Yapılacak Saha ID", my_active_jobs["Saha ID"].unique())
             status = st.selectbox("Yeni Durum Seçin", ["Giriş Yapılamadı", "İzin Maili Atılmalı", "Çalışma Tamamlandı", "Mal Sahibi Tepkili"])
             desc = st.text_area("Açıklama / Notlar")
             st.file_uploader("Fotoğrafları RAR Olarak Yükleyin", type=["rar"])
@@ -95,17 +94,10 @@ else:
                 idx = st.session_state.db_jobs[st.session_state.db_jobs["Saha ID"] == target].index
                 st.session_state.db_jobs.at[idx[0], "Durum"] = status
                 st.session_state.db_jobs.at[idx[0], "Acıklama"] = desc
-                st.success("İşlem tamamlandı.")
+                st.success("İşlem başarıyla tamamlandı.")
                 st.rerun()
         else:
-            st.info("Aktif işiniz bulunmuyor.")
-
-    # --- SAHA PERSONELİ: İŞ GEÇMİŞİ ---
-    elif choice == "İş Geçmişi":
-        st.subheader("İş Geçmişim")
-        hist = st.session_state.db_jobs[st.session_state.db_jobs["Personel"] == st.session_state.username]
-        st.table(hist.tail(10))
-        st.download_button("Excel Raporu", to_excel(hist), "is_gecmisim.xlsx")
+            st.info(f"Sayın {st.session_state.username}, üzerinize atanmış aktif iş bulunmuyor.")
 
     # --- YÖNETİM: İŞ ATAMASI ---
     elif choice == "İş Ataması":
@@ -115,11 +107,26 @@ else:
         saha_list = [u for u, d in st.session_state.user_db.items() if d["rol"] == "Saha Personeli"]
         per = st.selectbox("Personel Seçin", saha_list)
         if st.button("Atamayı Yap"):
-            new_job = {"Saha ID": sid, "Personel": per, "Acıklama": det, "Durum": "Yeni Atama", "Tarih": datetime.now().strftime("%d-%m-%Y %H:%M")}
-            st.session_state.db_jobs = pd.concat([st.session_state.db_jobs, pd.DataFrame([new_job])], ignore_index=True)
-            st.success("Atama başarılı.")
+            if sid:
+                new_job = pd.DataFrame([{
+                    "Saha ID": sid, 
+                    "Personel": per, 
+                    "Acıklama": det, 
+                    "Durum": "Yeni Atama", 
+                    "Tarih": datetime.now().strftime("%d-%m-%Y %H:%M"),
+                    "Red_Nedeni": ""
+                }])
+                st.session_state.db_jobs = pd.concat([st.session_state.db_jobs, new_job], ignore_index=True)
+                st.success(f"İş başarıyla {per} personeline atandı.")
+            else:
+                st.error("Saha ID boş bırakılamaz.")
 
-    # --- YÖNETİM: İZİN MAİLİ ---
+    # --- DİĞER MENÜLER ---
+    elif choice == "İş Geçmişi":
+        hist = st.session_state.db_jobs[st.session_state.db_jobs["Personel"] == st.session_state.username]
+        st.dataframe(hist, use_container_width=True)
+        st.download_button("Excel Raporu", to_excel(hist), "gecmis.xlsx")
+
     elif choice == "İzin Maili Bekleyenler":
         df_izin = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "İzin Maili Atılmalı"]
         st.table(df_izin)
@@ -130,7 +137,6 @@ else:
                 st.session_state.db_jobs.at[idx[0], "Durum"] = "Yeni Atama"
                 st.rerun()
 
-    # --- YÖNETİM: GERİ GELENLER ---
     elif choice == "Geri Gelen Atamalar":
         df_geri = st.session_state.db_jobs[st.session_state.db_jobs["Durum"].isin(["Giriş Yapılamadı", "Mal Sahibi Tepkili"])]
         st.table(df_geri)
@@ -141,12 +147,11 @@ else:
                 st.session_state.db_jobs.at[idx[0], "Durum"] = "Yeni Atama"
                 st.rerun()
 
-    # --- YÖNETİM: TAMAMLANANLAR ---
     elif choice == "Tamamlanan İşler":
         df_tamam = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "Çalışma Tamamlandı"]
         st.table(df_tamam)
         if not df_tamam.empty:
-            sid = st.selectbox("Onay/Red", df_tamam["Saha ID"])
+            sid = st.selectbox("İş Seç", df_tamam["Saha ID"])
             reason = st.text_input("Red Nedeni")
             c1, c2 = st.columns(2)
             if c1.button("Kabul OK"):
@@ -159,12 +164,11 @@ else:
                 st.session_state.db_jobs.at[idx[0], "Red_Nedeni"] = reason
                 st.rerun()
 
-    # --- TT ONAY VE HAK EDİŞ ---
     elif choice == "TT Onayı Bekleyen İşler":
         df_tt = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "TT Onay Bekler"]
         st.table(df_tt)
         if not df_tt.empty:
-            sid = st.selectbox("TT Onayı Ver", df_tt["Saha ID"])
+            sid = st.selectbox("İş Seç", df_tt["Saha ID"])
             if st.button("TT Onay Alındı"):
                 idx = st.session_state.db_jobs[st.session_state.db_jobs["Saha ID"] == sid].index
                 st.session_state.db_jobs.at[idx[0], "Durum"] = "Hak Ediş Bekliyor"
@@ -174,30 +178,24 @@ else:
         df_hak = st.session_state.db_jobs[st.session_state.db_jobs["Durum"] == "Hak Ediş Bekliyor"]
         st.table(df_hak)
         if not df_hak.empty:
-            sid = st.selectbox("Hak Ediş Onayı Ver", df_hak["Saha ID"])
+            sid = st.selectbox("İş Seç", df_hak["Saha ID"])
             if st.button("Hak Ediş Alındı"):
                 idx = st.session_state.db_jobs[st.session_state.db_jobs["Saha ID"] == sid].index
                 st.session_state.db_jobs.at[idx[0], "Durum"] = "Hak Ediş Alındı"
                 st.rerun()
 
-    # --- KULLANICI KONTROL ---
     elif choice == "Kullanıcı Kontrol":
         if st.session_state.role in ["Admin", "Yönetici"]:
-            with st.form("user_form"):
-                nu = st.text_input("Kullanıcı Adı")
-                np = st.text_input("Şifre")
-                nr = st.selectbox("Rol", ["Saha Personeli", "Müdür", "Yönetici"])
-                if st.form_submit_button("Kullanıcı Oluştur"):
-                    st.session_state.user_db[nu] = {"sifre": np, "rol": nr}
-                    st.success("Kullanıcı eklendi.")
-            st.dataframe(pd.DataFrame.from_dict(st.session_state.user_db, orient='index'))
-        else: st.error("Erişim yetkiniz yok.")
+            nu = st.text_input("Yeni Kullanıcı Adı")
+            np = st.text_input("Şifre")
+            nr = st.selectbox("Rol", ["Saha Personeli", "Müdür", "Yönetici"])
+            if st.button("Oluştur"):
+                st.session_state.user_db[nu] = {"sifre": np, "rol": nr}
+                st.success("Kullanıcı eklendi.")
+            st.write(pd.DataFrame.from_dict(st.session_state.user_db, orient='index'))
 
-    # --- PROFİL VE ÇIKIŞ ---
     elif choice == "Profil":
-        st.subheader("Profil")
         st.write(f"Kullanıcı: {st.session_state.username}")
-        st.text_input("Telefon", "05xx")
         st.text_input("Şifre Değiştir", type="password")
         st.button("Güncelle")
 
