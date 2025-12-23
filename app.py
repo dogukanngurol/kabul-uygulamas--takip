@@ -16,6 +16,7 @@ def get_connection():
 def init_db():
     conn = get_connection()
     cursor = conn.cursor()
+    # Önce tabloları oluştur
     cursor.execute('''CREATE TABLE IF NOT EXISTS users (
                         user_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         email TEXT UNIQUE,
@@ -41,8 +42,9 @@ def init_db():
                         item_name TEXT,
                         assigned_user_id INTEGER,
                         FOREIGN KEY(assigned_user_id) REFERENCES users(user_id))''')
+    conn.commit() # Tablo oluşturma işlemlerini kaydet
     
-    # Varsayılan Admin Kullanıcısı
+    # Tablolar oluştuktan sonra kullanıcı kontrolü yap
     cursor.execute("SELECT * FROM users WHERE email='admin1@sirket.com'")
     if not cursor.fetchone():
         cursor.execute("INSERT INTO users (email, password, user_name, user_role) VALUES (?,?,?,?)",
@@ -51,17 +53,21 @@ def init_db():
                        ("yonetici1@sirket.com", "yonetici123", "Proje Yöneticisi", "Yönetici"))
         cursor.execute("INSERT INTO users (email, password, user_name, user_role) VALUES (?,?,?,?)",
                        ("saha1@sirket.com", "saha123", "Saha Personeli 1", "Saha Personeli"))
-    conn.commit()
+        conn.commit()
     conn.close()
 
 def db_execute(query, params=(), fetch=False):
     conn = get_connection()
     cursor = conn.cursor()
-    cursor.execute(query, params)
-    result = cursor.fetchall() if fetch else None
-    conn.commit()
-    conn.close()
-    return result
+    try:
+        cursor.execute(query, params)
+        result = cursor.fetchall() if fetch else None
+        conn.commit()
+        return result
+    except Exception as e:
+        st.error(f"Veritabanı hatası: {e}")
+    finally:
+        conn.close()
 
 # --- YETKİ KONTROLLERİ ---
 def is_admin(): return st.session_state.get("user_role") == "Admin"
@@ -104,19 +110,21 @@ def dashboard():
     st.subheader(f"{get_greeting()}, {st.session_state.user_name}")
     if is_manager():
         col1, col2, col3 = st.columns(3)
-        total_jobs = len(db_execute("SELECT job_id FROM jobs", fetch=True))
-        pending_jobs = len(db_execute("SELECT job_id FROM jobs WHERE status='Beklemede'", fetch=True))
-        completed_jobs = len(db_execute("SELECT job_id FROM jobs WHERE status='Tamamlandı'", fetch=True))
-        col1.metric("Toplam İş", total_jobs)
-        col2.metric("Bekleyen İş", pending_jobs)
-        col3.metric("Tamamlanan İş", completed_jobs)
+        total_res = db_execute("SELECT COUNT(*) FROM jobs", fetch=True)
+        pending_res = db_execute("SELECT COUNT(*) FROM jobs WHERE status='Beklemede'", fetch=True)
+        completed_res = db_execute("SELECT COUNT(*) FROM jobs WHERE status='Tamamlandı'", fetch=True)
+        
+        col1.metric("Toplam İş", total_res[0][0] if total_res else 0)
+        col2.metric("Bekleyen İş", pending_res[0][0] if pending_res else 0)
+        col3.metric("Tamamlanan İş", completed_res[0][0] if completed_res else 0)
 
 def job_assignment():
     if not is_manager(): return st.warning("Yetkiniz yok.")
     st.subheader("Yeni İş Ata")
     users = db_execute("SELECT user_id, user_name FROM users", fetch=True)
-    user_dict = {u[1]: u[0] for u in users}
+    if not users: return st.info("Henüz kullanıcı tanımlanmamış.")
     
+    user_dict = {u[1]: u[0] for u in users}
     title = st.text_input("İş Başlığı")
     selected_user = st.selectbox("Personel", list(user_dict.keys()))
     city = st.selectbox("Şehir", ["İstanbul", "Ankara", "İzmir", "Bursa", "Antalya", "Adana", "Konya", "Diğer..."])
@@ -132,34 +140,22 @@ def job_list():
     if is_field_staff():
         query += f" WHERE assigned_to = {st.session_state.user_id}"
     
-    df = pd.read_sql(query, get_connection())
-    st.dataframe(df)
-    
-    if not df.empty:
-        job_to_update = st.selectbox("Güncellenecek İş ID", df['job_id'])
-        new_status = st.selectbox("Yeni Durum", ["Beklemede", "Devam Ediyor", "Tamamlandı"])
-        if st.button("Durum Güncelle"):
-            db_execute("UPDATE jobs SET status=? WHERE job_id=?", (new_status, job_to_update))
-            st.rerun()
-        
-        st.download_button("Excel Olarak İndir", export_to_excel("jobs"), "is_listesi.xlsx")
-
-def hakedis_management():
-    st.subheader("Hak Ediş Yönetimi")
-    df = pd.read_sql("SELECT job_id, title, hakedis_status FROM jobs", get_connection())
-    st.dataframe(df)
-    
-    if is_manager():
-        job_id = st.number_input("İş ID", step=1)
-        status = st.selectbox("Hak Ediş Durumu", ["Beklemede", "Alındı"])
-        if st.button("Güncelle"):
-            db_execute("UPDATE jobs SET hakedis_status=? WHERE job_id=?", (status, job_id))
-            st.rerun()
+    try:
+        df = pd.read_sql(query, get_connection())
+        st.dataframe(df)
+        if not df.empty:
+            job_to_update = st.selectbox("Güncellenecek İş ID", df['job_id'])
+            new_status = st.selectbox("Yeni Durum", ["Beklemede", "Devam Ediyor", "Tamamlandı"])
+            if st.button("Durum Güncelle"):
+                db_execute("UPDATE jobs SET status=? WHERE job_id=?", (new_status, job_to_update))
+                st.rerun()
+            st.download_button("Excel Olarak İndir", export_to_excel("jobs"), "is_listesi.xlsx")
+    except:
+        st.info("Henüz kayıtlı iş bulunamadı.")
 
 def user_management():
     if not is_admin(): return st.warning("Bu sayfa sadece Admin erişimine açıktır.")
     st.subheader("Kullanıcı Yönetimi")
-    
     with st.expander("Yeni Kullanıcı Ekle"):
         new_email = st.text_input("Email")
         new_pass = st.text_input("Şifre", type="password")
@@ -172,16 +168,14 @@ def user_management():
     
     users_df = pd.read_sql("SELECT user_id, email, user_name, user_role FROM users", get_connection())
     st.dataframe(users_df)
-    
-    del_id = st.number_input("Silinecek Kullanıcı ID", step=1)
-    if st.button("Kullanıcıyı Sil"):
+    del_id = st.number_input("Silinecek Kullanıcı ID", step=1, value=0)
+    if del_id > 0 and st.button("Kullanıcıyı Sil"):
         db_execute("DELETE FROM users WHERE user_id=?", (del_id,))
         st.rerun()
 
 # --- ANA UYGULAMA DÖNGÜSÜ ---
 def main():
     init_db()
-    
     if 'logged_in' not in st.session_state:
         st.session_state.logged_in = False
 
@@ -192,17 +186,16 @@ def main():
         st.sidebar.write(f"**Kullanıcı:** {st.session_state.user_name}")
         st.sidebar.write(f"**Rol:** {st.session_state.user_role}")
         
-        menu = ["Dashboard", "İş Atama", "İş Listesi", "Hak Ediş", "Envanter", "Kullanıcı Yönetimi", "Profil"]
+        menu = ["Dashboard", "İş Atama", "İş Listesi", "Kullanıcı Yönetimi", "Profil"]
         choice = st.sidebar.radio("Menü", menu)
         
         if st.sidebar.button("Çıkış Yap"):
-            st.session_state.logged_in = False
+            st.session_state.clear()
             st.rerun()
 
         if choice == "Dashboard": dashboard()
         elif choice == "İş Atama": job_assignment()
         elif choice == "İş Listesi": job_list()
-        elif choice == "Hak Ediş": hakedis_management()
         elif choice == "Kullanıcı Yönetimi": user_management()
         elif choice == "Profil":
             st.subheader("Profil Güncelleme")
